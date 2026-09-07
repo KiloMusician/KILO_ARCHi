@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "canonicalization": "archi-canonical-json-v1",
+  "scorerVersion": "archi-arc-exact-v1",
+  "fixture": "archi-synthetic-smoke-v1",
+  "canonicalTask": "{\"taskId\":\"synthetic-increment-001\",\"test\":[{\"input\":[[1,0,1]],\"output\":[[2,0,2]]},{\"input\":[[5,5],[0,5]],\"output\":[[6,6],[0,6]]}],\"train\":[{\"input\":[[0,1],[1,0]],\"output\":[[0,2],[2,0]]},{\"input\":[[3]],\"output\":[[4]]}]}",
+  "taskHash": "sha256:e31aa2467a609f8c3da50e8539601fa3bd8d8763d72840488406d1f6bed395e6",
+  "manifestHash": "sha256:03156b46f2f5cf4b925bc7944eb1e976d9bb5b3ac1aed56a2bfef05829b9d924",
+  "receiptHashes": [
+    "sha256:4084b8b731852f3759322143a5136f30be4c6130eb42879ed7722e03808fb7c0",
+    "sha256:71f6c24fbd68853ac439e8077f5d1e6ae6ea77da5b59c92e40248022bfb9677a"
+  ],
+  "proposalHash": "sha256:d07944169a6ee25b3e43ecf445a5644a7abadba13a855706ae562ad9bf67c4b7",
+  "counts": {
+    "exact": 1,
+    "incorrect": 1,
+    "missing": 0,
+    "invalid": 0,
+    "unscored": 0,
+    "totalExamples": 2,
+    "exactTasks": 0,
+    "totalTasks": 1
+  },
+  "exactRate": 0.5
+}

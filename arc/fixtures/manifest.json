@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "manifestId": "archi-synthetic-smoke-v1",
+  "mode": "fixture",
+  "integration": "none",
+  "scorerVersion": "archi-arc-exact-v1",
+  "source": {
+    "label": "ARCHi synthetic ARC-format smoke fixtures",
+    "status": "synthetic-fixture",
+    "snapshot": "2026-08-28",
+    "contentHash": "sha256:f45cf7721b3678f2fec2d35b529c26ec4eed21264e49582e8b2848776bc1f2d0"
+  },
+  "split": "smoke",
+  "tasks": [
+    {
+      "taskId": "synthetic-increment-001",
+      "taskHash": "sha256:e31aa2467a609f8c3da50e8539601fa3bd8d8763d72840488406d1f6bed395e6",
+      "testExamples": 2
+    }
+  ]
+}

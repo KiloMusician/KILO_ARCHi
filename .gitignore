@@ -1,0 +1,17 @@
+node_modules/
+dist/
+output/
+tmp/
+.codex/
+.agents/
+.env
+.env.*
+!.env.example
+.DS_Store
+*.log
+**/__pycache__/
+*.pyc
+desktop/.build/
+desktop/.swiftpm/
+test-results/
+playwright-report/

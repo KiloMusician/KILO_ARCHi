@@ -1,0 +1,484 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#f4f1f7" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; script-src-attr 'none'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; worker-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'" />
+    <meta
+      name="description"
+      content="A little room for ARCHi to explore, grow, and play with QiMon."
+    />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="ARCHi" />
+    <link vite-ignore rel="manifest" href="%BASE_URL%pwa/manifest.webmanifest" />
+    <link vite-ignore rel="icon" href="%BASE_URL%pwa/icons/archi-32.png" sizes="32x32" type="image/png" />
+    <link vite-ignore rel="apple-touch-icon" href="%BASE_URL%pwa/icons/archi-180.png" sizes="180x180" />
+    <style>
+      html:not(.archi-ready) body { visibility: hidden; background: #f4f1f7; }
+    </style>
+    <title>ARCHi · Habitat & QiMon</title>
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="field" tabindex="0" aria-label="ARCHi's living field"></canvas>
+
+      <section class="field-navigator" id="field-navigator" aria-labelledby="navigator-title" hidden inert>
+        <div class="field-navigator__header">
+          <div>
+            <p class="eyebrow">Accessible field navigator</p>
+            <h2 id="navigator-title">Guide by signal</h2>
+          </div>
+          <button class="icon-button" id="close-navigator" type="button" aria-label="Return focus to the field">×</button>
+        </div>
+        <p id="navigator-status" aria-live="polite">Choose a signal to guide ARCHi toward it.</p>
+        <div class="navigator-signals" id="navigator-signals"></div>
+      </section>
+
+      <header class="topbar" id="topbar">
+        <button class="wordmark" id="home-button" type="button" aria-label="Return to ARCHi's habitat">
+          <span class="wordmark__mark" aria-hidden="true">◈</span>
+          <span>ARCHi</span>
+        </button>
+        <div class="journey-status" aria-live="polite">
+          <span id="stage-label">Hatchling</span>
+          <span class="status-divider" aria-hidden="true"></span>
+          <span id="play-label">Play 01</span>
+        </div>
+        <div class="topbar__actions">
+          <button class="text-button battle-entry" id="battle-button" type="button" aria-label="Open the local QiMon Practice Arena">
+            QiMon
+          </button>
+          <button class="text-button install-button" id="install-button" type="button" aria-label="Install ARCHi on this device" hidden>
+            Install
+          </button>
+          <button class="text-button" id="sound-button" type="button" aria-pressed="false">
+            Sound off
+          </button>
+          <button class="text-button" id="continuity-button" type="button" aria-expanded="false">
+            Continuity
+          </button>
+        </div>
+      </header>
+
+      <details class="presence-console" id="presence-console">
+        <summary><span aria-hidden="true">✧</span> Appearance</summary>
+        <div class="presence-console__identity">
+          <span class="presence-console__core" aria-hidden="true"></span>
+          <div>
+            <p id="presence-console-title">Try a different presence</p>
+            <output id="presence-state" aria-live="polite">Proto · Front · Idle · 100%</output>
+          </div>
+        </div>
+        <div class="presence-console__rail">
+          <fieldset class="presence-group">
+            <legend>Form</legend>
+            <button type="button" data-presentation-form="core" aria-pressed="false">Core</button>
+            <button type="button" data-presentation-form="field" aria-pressed="false">Field</button>
+            <button type="button" data-presentation-form="light" aria-pressed="false">Light</button>
+            <button type="button" data-presentation-form="reveal" aria-pressed="false">Reveal</button>
+            <button class="is-active" type="button" data-presentation-form="proto" aria-pressed="true">Proto</button>
+            <button type="button" data-presentation-form="context" aria-pressed="false">Context</button>
+          </fieldset>
+          <fieldset class="presence-group">
+            <legend>View</legend>
+            <button class="is-active" type="button" data-presentation-view="front" aria-pressed="true">Front</button>
+            <button type="button" data-presentation-view="three-quarter" aria-pressed="false">¾</button>
+            <button type="button" data-presentation-view="side" aria-pressed="false">Side</button>
+            <button type="button" data-presentation-view="back" aria-pressed="false">Back</button>
+          </fieldset>
+          <fieldset class="presence-group">
+            <legend>Motion</legend>
+            <button class="is-active" type="button" data-presentation-motion="idle" aria-pressed="true">Idle</button>
+            <button type="button" data-presentation-motion="focus" aria-pressed="false">Focus</button>
+            <button type="button" data-presentation-motion="play" aria-pressed="false">Play</button>
+          </fieldset>
+          <fieldset class="presence-group presence-group--scale">
+            <legend>Scale</legend>
+            <button type="button" data-presentation-scale="decrease" aria-label="Make ARCHi smaller">−</button>
+            <button type="button" data-presentation-scale="reset" aria-label="Reset ARCHi scale">1×</button>
+            <button type="button" data-presentation-scale="increase" aria-label="Make ARCHi larger">+</button>
+          </fieldset>
+          <button class="presence-return presence-unfold" id="presence-unfold" type="button" aria-label="Unfold ARCHi from Core to Context">
+            <span aria-hidden="true">✦</span>
+            Unfold
+          </button>
+          <button class="presence-return" id="presence-return" type="button">
+            <span aria-hidden="true">◈</span>
+            Return
+          </button>
+        </div>
+        <p class="presence-console__boundary">A preview for this visit. Your Journey stays the same.</p>
+      </details>
+
+      <main class="experience" id="experience">
+        <section class="intro-panel is-visible" id="intro-panel" aria-labelledby="intro-title">
+          <div class="habitat-heading">
+            <p class="eyebrow">Your companion’s habitat</p>
+            <h1 id="intro-title">A little room<br />to grow.</h1>
+            <p class="intro-copy">Spend a moment together. Follow a little curiosity.</p>
+          </div>
+          <div class="habitat-dock">
+          <section class="care-panel" aria-labelledby="care-title">
+            <div class="care-heading">
+              <p id="care-title">How ARCHi feels</p>
+              <p id="care-mood">Balanced</p>
+            </div>
+            <div class="care-vitals">
+              <div class="care-vital care-vital--energy">
+                <span><span id="care-energy-label">Energy</span><span class="care-value" id="care-energy-output" aria-hidden="true">80</span></span>
+                <meter id="care-energy" aria-labelledby="care-energy-label" min="0" max="100" value="80">80%</meter>
+              </div>
+              <div class="care-vital care-vital--calm">
+                <span><span id="care-calm-label">Calm</span><span class="care-value" id="care-calm-output" aria-hidden="true">75</span></span>
+                <meter id="care-calm" aria-labelledby="care-calm-label" min="0" max="100" value="75">75%</meter>
+              </div>
+              <div class="care-vital care-vital--curiosity">
+                <span><span id="care-curiosity-label">Curiosity</span><span class="care-value" id="care-curiosity-output" aria-hidden="true">50</span></span>
+                <meter id="care-curiosity" aria-labelledby="care-curiosity-label" min="0" max="100" value="50">50%</meter>
+              </div>
+            </div>
+            <p class="care-response" id="care-response">
+              A greeting, a little care, or somewhere new to explore.
+            </p>
+            <div class="care-actions" role="group" aria-label="Care for ARCHi">
+              <button class="care-action" id="care-greet" type="button">
+                <span>Greet</span><small>Connect</small>
+              </button>
+              <button class="care-action" id="care-tend" type="button">
+                <span>Tend</span><small>Restore energy</small>
+              </button>
+              <button class="care-action" id="care-rest" type="button">
+                <span>Rest</span><small>Settle calm</small>
+              </button>
+              <button class="care-action care-action--primary" id="begin-button" type="button">
+                <span>Explore</span><small id="explore-description">Enter the first field</small><span aria-hidden="true">→</span>
+              </button>
+            </div>
+          </section>
+          <button class="relay-entry" id="relay-entry" type="button">
+            <span aria-hidden="true">⌁</span> A small repair <small>Solve a puzzle together</small>
+          </button>
+          <p class="control-hint" id="control-hint">Arrow keys or a tap to move · F for fullscreen</p>
+          </div>
+        </section>
+
+        <section class="field-copy" id="field-copy">
+          <p class="eyebrow" id="field-eyebrow">Observe</p>
+          <h2 id="field-title">Find three signals</h2>
+          <p id="field-instruction">Guide ARCHi into the lights that feel worth noticing.</p>
+        </section>
+
+        <section class="proposal-panel" id="proposal-panel" aria-labelledby="proposal-title">
+          <p class="eyebrow">Propose · nothing changes yet</p>
+          <h2 id="proposal-title">What should ARCHi keep?</h2>
+          <p class="proposal-summary" id="proposal-summary"></p>
+          <div class="proposal-choices" id="proposal-choices"></div>
+          <button class="hold-button" id="hold-button" type="button">Hold the current shape</button>
+        </section>
+
+        <section class="reflection-panel" id="reflection-panel" aria-labelledby="reflection-title">
+          <p class="eyebrow" id="reflection-eyebrow">Kept locally · play complete</p>
+          <h2 id="reflection-title"></h2>
+          <p id="reflection-copy"></p>
+          <div class="reflection-trace" id="reflection-trace"></div>
+          <button class="primary-button" id="again-button" type="button">
+            <span>Enter another field</span>
+            <span aria-hidden="true">↗</span>
+          </button>
+        </section>
+      </main>
+
+      <section class="relay-panel" id="relay-panel" aria-labelledby="relay-title" hidden inert>
+        <header class="relay-header">
+          <div><p class="eyebrow" id="relay-step">01 · Make a connection</p><h2 id="relay-title">A small repair, together</h2></div>
+          <button class="text-button" id="relay-return" type="button">Return to Habitat</button>
+        </header>
+        <div class="relay-body">
+          <div id="relay-content"></div>
+          <p class="relay-feedback" id="relay-feedback" role="status"></p>
+          <p class="relay-note" id="relay-keep-copy" role="status" hidden></p>
+          <div class="relay-actions">
+            <button class="primary-button" id="relay-keep" type="button" hidden>Keep completion</button>
+            <button class="text-button" id="relay-restart" type="button" hidden>Try again</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="battle-panel" id="battle-panel" aria-labelledby="battle-title" hidden inert>
+        <header class="battle-panel__header">
+          <div>
+            <p class="eyebrow">QiMon · practice together</p>
+            <h1 id="battle-title">Meet in the clearing.</h1>
+            <p id="battle-status" aria-live="polite">
+              Choose each player’s Bond role and field one to three practice QiMon.
+            </p>
+          </div>
+          <button class="battle-return" id="battle-return" type="button">
+            <span aria-hidden="true">◈</span>
+            Return to ARCHi
+          </button>
+        </header>
+
+        <div class="battle-setup" id="battle-setup">
+          <div class="battle-setup__intro">
+            <div><p class="eyebrow">Choose your company</p><h2>A friendly encounter.</h2></div>
+            <label class="battle-opponent"><span>Play with</span><select id="battle-opponent-mode"><option value="companion">Practice partner</option><option value="local">Two players</option></select></label>
+          </div>
+          <div class="battle-setup__teams">
+            <fieldset class="battle-team-builder" data-battle-builder="one">
+              <legend>Your team</legend>
+              <label>
+                <span>Bond role</span>
+                <select id="battle-one-bond" data-battle-role-select></select>
+              </label>
+              <label>
+                <span>Team size</span>
+                <select id="battle-one-size" data-battle-size="one">
+                  <option value="1">1 · concentrated</option>
+                  <option value="2">2 · divided</option>
+                  <option value="3">3 · formation</option>
+                </select>
+              </label>
+              <div class="battle-roster-builder" aria-label="Player One practice roster">
+                <label data-battle-slot="one-0"><span>QiMon 1</span><select id="battle-one-role-0" data-battle-role-select></select></label>
+                <label data-battle-slot="one-1" hidden><span>QiMon 2</span><select id="battle-one-role-1" data-battle-role-select disabled></select></label>
+                <label data-battle-slot="one-2" hidden><span>QiMon 3</span><select id="battle-one-role-2" data-battle-role-select disabled></select></label>
+              </div>
+              <output id="battle-one-allocation">36 Integrity · 12 Resonance · Concentration +2</output>
+            </fieldset>
+
+            <div class="battle-versus" aria-hidden="true">
+              <span></span><strong>VS</strong><span></span>
+            </div>
+
+            <fieldset class="battle-team-builder battle-team-builder--two" data-battle-builder="two">
+              <legend>The other team</legend>
+              <label>
+                <span>Bond role</span>
+                <select id="battle-two-bond" data-battle-role-select></select>
+              </label>
+              <label>
+                <span>Team size</span>
+                <select id="battle-two-size" data-battle-size="two">
+                  <option value="1">1 · concentrated</option>
+                  <option value="2">2 · divided</option>
+                  <option value="3">3 · formation</option>
+                </select>
+              </label>
+              <div class="battle-roster-builder" aria-label="Player Two practice roster">
+                <label data-battle-slot="two-0"><span>QiMon 1</span><select id="battle-two-role-0" data-battle-role-select></select></label>
+                <label data-battle-slot="two-1" hidden><span>QiMon 2</span><select id="battle-two-role-1" data-battle-role-select disabled></select></label>
+                <label data-battle-slot="two-2" hidden><span>QiMon 3</span><select id="battle-two-role-2" data-battle-role-select disabled></select></label>
+              </div>
+              <output id="battle-two-allocation">36 Integrity · 12 Resonance · Concentration +2</output>
+            </fieldset>
+          </div>
+          <button class="battle-start" id="battle-start" type="button">
+            <span>Begin encounter</span>
+            <span aria-hidden="true">→</span>
+          </button>
+          <p class="battle-partner-note" id="battle-partner-note">Your practice partner chooses its move before you do.</p>
+          <details class="battle-rules">
+            <summary>How practice works</summary>
+            <p class="battle-boundary">Each team shares 36 Integrity, 12 Resonance, and three Spark. Choose one command each round. Smaller teams concentrate their strength; larger teams offer more roles. A matching Bond role adds +1 alignment.</p>
+            <p class="battle-setup__note">These are temporary formations. After a complete partner practice, you can keep one replayable Journey receipt. Practice never awards care, growth or appearance points.</p>
+          </details>
+        </div>
+
+        <div class="battle-combat" id="battle-combat" hidden>
+          <section class="battle-team-hud" id="battle-one-hud" aria-labelledby="battle-one-name">
+            <div class="battle-team-hud__heading">
+              <div><span>Player One</span><strong id="battle-one-name">Lumen</strong></div>
+              <details class="battle-formation-details"><summary id="battle-one-spark">Spark 3</summary><div>
+                <p id="battle-one-meta">36 / 36 Integrity · Active Lumen</p>
+                <div class="battle-roster" id="battle-one-roster" role="list" aria-label="Player One formation"></div>
+              </div></details>
+            </div>
+            <div class="battle-integrity" role="progressbar" aria-label="Player One total Integrity" aria-valuemin="0" aria-valuemax="36" aria-valuenow="36" aria-valuetext="36 of 36 total Integrity">
+              <span id="battle-one-integrity-fill"></span>
+            </div>
+          </section>
+
+          <div class="battle-round-seal" aria-live="polite">
+            <span id="battle-round-label">Round 1</span>
+            <strong id="battle-round-result">Choose both commands</strong>
+            <small>Choose a move. See what happens together.</small>
+          </div>
+
+          <section class="battle-team-hud battle-team-hud--two" id="battle-two-hud" aria-labelledby="battle-two-name">
+            <div class="battle-team-hud__heading">
+              <div><span>Player Two</span><strong id="battle-two-name">Frame</strong></div>
+              <details class="battle-formation-details"><summary id="battle-two-spark">Spark 3</summary><div>
+                <p id="battle-two-meta">36 / 36 Integrity · Active Frame</p>
+                <div class="battle-roster" id="battle-two-roster" role="list" aria-label="Player Two formation"></div>
+              </div></details>
+            </div>
+            <div class="battle-integrity" role="progressbar" aria-label="Player Two total Integrity" aria-valuemin="0" aria-valuemax="36" aria-valuenow="36" aria-valuetext="36 of 36 total Integrity">
+              <span id="battle-two-integrity-fill"></span>
+            </div>
+          </section>
+
+          <div class="battle-command-dock" id="battle-command-dock">
+            <p class="battle-command-help" id="battle-command-help">Choose a move for this round.</p>
+            <fieldset id="battle-one-command-fieldset" data-locked="false">
+              <legend>Player One command</legend>
+              <label><span class="sr-only">Player One command</span><select id="battle-one-action"></select></label>
+              <label id="battle-one-target-label" hidden><span class="sr-only">Player One reserve target</span><select id="battle-one-target"></select></label>
+              <button class="battle-command-lock" id="battle-one-lock" type="button">Seal P1 command</button>
+              <span class="battle-command-sealed" id="battle-one-sealed" role="status" hidden>P1 command sealed</span>
+            </fieldset>
+            <button id="battle-resolve" type="button" disabled>Reveal &amp; resolve</button>
+            <fieldset id="battle-two-command-fieldset" data-locked="false">
+              <legend>Player Two command</legend>
+              <label><span class="sr-only">Player Two command</span><select id="battle-two-action"></select></label>
+              <label id="battle-two-target-label" hidden><span class="sr-only">Player Two reserve target</span><select id="battle-two-target"></select></label>
+              <button class="battle-command-lock" id="battle-two-lock" type="button">Seal P2 command</button>
+              <span class="battle-command-sealed" id="battle-two-sealed" role="status" hidden>P2 command sealed</span>
+            </fieldset>
+          </div>
+
+          <div class="battle-complete" id="battle-complete" hidden>
+            <strong id="battle-winner">The Field settles.</strong>
+            <button id="battle-keep" type="button" disabled>Keep practice</button>
+            <p id="battle-keep-status" role="status">Nothing is saved until you choose Keep practice.</p>
+            <button id="battle-again" type="button">Build another formation</button>
+          </div>
+
+          <details class="battle-history"><summary>Round by round</summary><ol class="battle-transcript" id="battle-transcript" aria-label="Complete practice round transcript"></ol></details>
+        </div>
+      </section>
+
+      <aside
+        class="continuity-panel"
+        id="continuity-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="continuity-title"
+        aria-hidden="true"
+        inert
+      >
+        <div class="continuity-panel__header">
+          <div>
+            <p class="eyebrow">Your Journey</p>
+            <h2 id="continuity-title">A familiar companion.</h2>
+          </div>
+          <button class="icon-button" id="close-continuity" type="button" aria-label="Close continuity panel">×</button>
+        </div>
+
+        <div class="core-lock">
+          <span class="core-lock__orb" aria-hidden="true"></span>
+          <div>
+            <strong>Always ARCHi</strong>
+            <p>A changing shape. The same companion and history.</p>
+            <p id="continuity-growth">Hatchling · bond 1 · 0 completed plays</p>
+          </div>
+        </div>
+
+        <section class="continuity-section journey-passport" aria-labelledby="passport-heading">
+          <div class="section-heading"><span id="passport-heading">Identity</span><span>Local passport</span></div>
+          <strong id="passport-display-id"></strong>
+          <p>This identity stays with ARCHi as his form and history grow.</p>
+          <details>
+            <summary>Identity details</summary>
+            <dl>
+              <dt>First created</dt><dd><time id="passport-created"></time></dd>
+              <dt>Full origin</dt><dd><code id="passport-origin"></code></dd>
+            </dl>
+            <p class="passport-note">A local record, without verified ownership, scarcity or market value.</p>
+          </details>
+        </section>
+
+        <div class="continuity-section">
+          <div class="section-heading">
+            <span>Role affinity</span>
+            <span id="dominant-role-label">Research · Scout</span>
+          </div>
+          <div class="affinity-list" id="affinity-list"></div>
+        </div>
+
+        <div class="continuity-section">
+          <div class="section-heading">
+            <span>Kept traces</span>
+            <span id="trace-count">0 local</span>
+          </div>
+          <ol class="trace-list" id="trace-list"></ol>
+        </div>
+
+        <div class="continuity-section">
+          <div class="section-heading"><span>Shared milestones</span><span id="milestone-count">0 kept</span></div>
+          <ol class="milestone-list" id="milestone-list"></ol>
+        </div>
+
+        <div class="continuity-section journey-archive">
+          <div class="section-heading">
+            <span>Journey archive</span>
+            <span>Local file</span>
+          </div>
+          <p class="journey-archive__copy">Save a copy of your Journey, or review one you saved elsewhere.</p>
+          <p class="journey-archive__trust" id="journey-archive-trust">The history is checked on this device. A file does not verify who created it.</p>
+          <div class="journey-archive__actions">
+            <button class="archive-button" id="export-journey" type="button">Download copy</button>
+            <button class="archive-button" id="review-journey" type="button">Review a copy</button>
+            <input id="journey-file" type="file" accept="application/json,.json" hidden />
+          </div>
+          <p class="journey-archive__status" id="journey-archive-status" aria-live="polite"></p>
+          <div class="journey-import-preview" id="journey-import-preview" role="group" aria-labelledby="journey-import-title" aria-describedby="journey-import-summary journey-import-relation journey-import-warning journey-archive-trust" hidden>
+            <strong id="journey-import-title">Journey ready for review</strong>
+            <p id="journey-import-summary"></p>
+            <p id="journey-import-relation"></p>
+            <p class="journey-import-preview__warning" id="journey-import-warning">Replacing is explicit and complete. Histories are never merged.</p>
+            <div>
+              <button id="cancel-journey-import" type="button">Keep current</button>
+              <button id="confirm-journey-import" type="button" aria-describedby="journey-import-summary journey-import-relation journey-import-warning journey-archive-trust">Replace Journey</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="continuity-section device-shell" aria-labelledby="device-shell-heading">
+          <div class="section-heading">
+            <span id="device-shell-heading">Device presence</span>
+            <span id="device-shell-state" aria-live="polite">Browser tab</span>
+          </div>
+          <p class="device-shell__copy" id="device-shell-copy">
+            Installation adds a launch surface. The offline cache stores app files, never this Journey.
+            Browser and installed copies may use separate local storage. To transfer a Journey, Download a
+            copy, then Review and explicitly Replace it in the other copy.
+          </p>
+        </div>
+
+        <div class="continuity-footer">
+          <p><span class="local-dot"></span> This journey stays in this browser on this device.</p>
+          <button class="reset-button" id="reset-button" type="button">Begin a new journey</button>
+          <div class="reset-confirm" id="reset-confirm" hidden>
+            <p>Remove this local journey and hatch a new ARCHi?</p>
+            <div>
+              <button id="cancel-reset" type="button">Keep it</button>
+              <button id="confirm-reset" type="button">Reset journey</button>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <div class="scrim" id="scrim" hidden></div>
+
+      <footer class="field-rail" id="field-rail">
+        <div class="signal-progress" id="signal-progress" aria-label="Signals found: 0 of 3">
+          <span class="signal-pip" aria-label="Signal 1 not found"></span>
+          <span class="signal-pip" aria-label="Signal 2 not found"></span>
+          <span class="signal-pip" aria-label="Signal 3 not found"></span>
+        </div>
+        <p id="field-name">Habitat · Core Pearl</p>
+        <div class="composure-meter">
+          <span>Composure</span>
+          <span class="composure-track"><span id="composure-fill"></span></span>
+          <progress id="composure-progress" class="sr-only" aria-label="Field composure" max="100" value="100">100%</progress>
+        </div>
+      </footer>
+
+      <div class="toast" id="toast" role="status"></div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

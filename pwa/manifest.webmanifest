@@ -1,0 +1,40 @@
+{
+  "id": "/",
+  "name": "ARCHi · One light, shaped by you",
+  "short_name": "ARCHi",
+  "description": "A local digital companion shaped through care and play.",
+  "lang": "en-US",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#02080a",
+  "theme_color": "#061114",
+  "categories": ["games", "lifestyle"],
+  "prefer_related_applications": false,
+  "icons": [
+    {
+      "src": "/pwa/icons/archi-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/pwa/icons/archi-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/pwa/icons/archi-maskable-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/pwa/icons/archi-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

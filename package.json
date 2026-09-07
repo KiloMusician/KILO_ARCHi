@@ -1,0 +1,34 @@
+{
+  "name": "archi-companion",
+  "version": "0.7.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc --noEmit && vite build && node scripts/build-pwa.mjs",
+    "test": "vitest run src",
+    "arc:typecheck": "tsc --project arc/tsconfig.json",
+    "arc:test": "vitest run arc/test",
+    "pwa:test": "node --test scripts/pwa-contract.test.mjs",
+    "foundation:test": "node --test scripts/boundary-text.test.mjs scripts/episode-trace.test.mjs",
+    "desktop:build": "swift build --package-path desktop",
+    "desktop:test": "swift test --package-path desktop",
+    "desktop:review": "./script/build_and_run.sh --verify --review",
+    "check": "npm run test && npm run foundation:test && npm run pwa:test && npm run arc:typecheck && npm run arc:test && npm run build"
+  },
+  "devDependencies": {
+    "es-module-lexer": "2.3.2",
+    "playwright": "1.62.1",
+    "typescript": "7.0.2",
+    "vite": "8.2.2",
+    "vitest": "4.1.11"
+  },
+  "dependencies": {
+    "@noble/hashes": "2.3.0"
+  },
+  "license": "MIT",
+  "description": "Local-first ARCHi desktop companion with Habitat and QiMon practice battles",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cr8ph8/ARCHi.git"
+  }
+}

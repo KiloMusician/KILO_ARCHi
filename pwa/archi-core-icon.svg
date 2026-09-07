@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title description">
+  <title id="title">ARCHi Core Pearl</title>
+  <desc id="description">A warm opal pearl inside cyan and amber continuity rings on a deep graphite field.</desc>
+  <defs>
+    <radialGradient id="field" cx="50%" cy="46%" r="62%">
+      <stop offset="0" stop-color="#0b3032" />
+      <stop offset="0.56" stop-color="#061719" />
+      <stop offset="1" stop-color="#02080a" />
+    </radialGradient>
+    <radialGradient id="pearl" cx="43%" cy="38%" r="65%">
+      <stop offset="0" stop-color="#ffffff" />
+      <stop offset="0.32" stop-color="#eefcf9" />
+      <stop offset="0.7" stop-color="#f4dfb2" />
+      <stop offset="1" stop-color="#d5a852" />
+    </radialGradient>
+    <filter id="cyanGlow" x="-80%" y="-80%" width="260%" height="260%">
+      <feGaussianBlur stdDeviation="11" />
+    </filter>
+    <filter id="pearlGlow" x="-100%" y="-100%" width="300%" height="300%">
+      <feGaussianBlur stdDeviation="18" />
+    </filter>
+  </defs>
+  <rect width="512" height="512" rx="116" fill="url(#field)" />
+  <path d="M256 71 441 256 256 441 71 256Z" fill="none" stroke="#d9a750" stroke-opacity=".34" stroke-width="3" />
+  <circle cx="256" cy="256" r="131" fill="none" stroke="#52ddd6" stroke-opacity=".19" stroke-width="3" />
+  <circle cx="256" cy="256" r="103" fill="none" stroke="#72eee7" stroke-opacity=".46" stroke-width="4" stroke-dasharray="4 15" stroke-linecap="round" />
+  <circle cx="256" cy="256" r="79" fill="none" stroke="#75f3eb" stroke-opacity=".42" stroke-width="16" filter="url(#cyanGlow)" />
+  <circle cx="256" cy="256" r="60" fill="#e8d9ab" fill-opacity=".5" filter="url(#pearlGlow)" />
+  <circle cx="256" cy="256" r="54" fill="url(#pearl)" stroke="#fffdf1" stroke-width="4" />
+  <circle cx="238" cy="238" r="13" fill="#ffffff" fill-opacity=".88" />
+  <circle cx="256" cy="121" r="7" fill="#d9a750" />
+  <circle cx="391" cy="256" r="7" fill="#52ddd6" />
+  <circle cx="256" cy="391" r="7" fill="#d9a750" />
+  <circle cx="121" cy="256" r="7" fill="#52ddd6" />
+</svg>
