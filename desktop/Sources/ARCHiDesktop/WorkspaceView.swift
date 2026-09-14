@@ -32,6 +32,8 @@ struct WorkspaceView: View {
                     WorkTogetherWorkspace(store: store)
                 } else if store.section == .assistant {
                     AssistantWorkspace(store: store)
+                } else if store.section == .marketplace {
+                    MarketplaceWorkspace(store: store)
                 } else if store.section == .nodeLab {
                     CompanionGraphWorkspace(store: store)
                 } else if store.section == .play && store.allowsPlay {
@@ -81,7 +83,7 @@ struct WorkspaceView: View {
                     ForEach(store.allowsPlay ? [WorkspaceSection.context, .assistant, .nodeLab, .play] : [.context, .assistant, .nodeLab]) { section in sidebarRow(section) }
                 }
                 Section("MAKE IT YOURS") {
-                    ForEach([WorkspaceSection.appearance, .evolution, .rhythm, .memory]) { section in sidebarRow(section) }
+                    ForEach([WorkspaceSection.appearance, .marketplace, .evolution, .rhythm, .memory]) { section in sidebarRow(section) }
                 }
                 Section("PREFERENCES") {
                     ForEach([WorkspaceSection.connections, .accessibility, .advanced]) { section in sidebarRow(section) }
@@ -145,6 +147,7 @@ struct WorkspaceView: View {
     @ViewBuilder private var sectionContent: some View {
         switch store.section {
         case .assistant: EmptyView() // The assistant keeps its composer below its reply scroll.
+        case .marketplace: EmptyView()
         case .nodeLab: EmptyView() // The native graph owns its canvas and inspector scrolling.
         case .play: EmptyView() // Hosted separately so the game owns its scrolling and focus.
         case .appearance: AppearanceWorkspace(store: store)
@@ -1009,6 +1012,7 @@ private extension WorkspaceSection {
         case .assistant: "bubble.left.and.bubble.right"
         case .nodeLab: "point.3.connected.trianglepath.dotted"
         case .play: "gamecontroller"
+        case .marketplace: "bag"
         case .appearance: "paintpalette"
         case .evolution: "sparkles"
         case .rhythm: "waveform"
@@ -1024,7 +1028,7 @@ private extension WorkspaceSection {
         case .assistant: "A little space to think"
         case .nodeLab: "Connected knowledge"
         case .play: "Your world of play"
-        case .appearance, .evolution, .rhythm: "Make it yours"
+        case .marketplace, .appearance, .evolution, .rhythm: "Make it yours"
         case .memory, .context: "Always your choice"
         case .connections, .accessibility, .advanced: "Your workspace"
         }
@@ -1034,6 +1038,7 @@ private extension WorkspaceSection {
         case .assistant: "Here, with you."
         case .nodeLab: "Your connections, in view."
         case .play: "A little room to play."
+        case .marketplace: "A little more you."
         case .appearance: "A familiar presence. Your style."
         case .evolution: "A life together."
         case .rhythm: "At your pace. In your tone."
@@ -1049,6 +1054,7 @@ private extension WorkspaceSection {
         case .assistant: "Your thoughts, your context, and a companion close by."
         case .nodeLab: "Follow the sources, lessons and work behind each answer."
         case .play: "Return to your Habitat, continue your Journey, and meet in the Practice Arena."
+        case .marketplace: "Discover, make and exchange local companion items."
         case .appearance: "Choose how ARCHi shows up on your desktop."
         case .evolution: "Familiar family traits. Small individual differences. Shared experiences."
         case .rhythm: "Set the kind of conversation that feels right for you."

@@ -60,11 +60,12 @@ final class FocusGesturePersistenceTests: XCTestCase {
         let original = NativePreferenceDocument(revision: 8, preferences: preferences, lessons: [lesson()])
         var object = try dictionary(original)
         object["schema"] = "archi-native-preferences/v2"
+        object.removeValue(forKey: "itemLibrary") // v2 predates local designs.
         let bytes = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
         try bytes.write(to: url)
 
         let result = try NativePreferencePersistence.read(url)
-        XCTAssertEqual(result.document.schema, "archi-native-preferences/v4")
+        XCTAssertEqual(result.document.schema, NativePreferenceDocument.currentSchema)
         XCTAssertEqual(result.document.revision, original.revision)
         XCTAssertEqual(result.document.preferences, original.preferences)
         XCTAssertEqual(result.document.lessons, original.lessons)
@@ -72,7 +73,7 @@ final class FocusGesturePersistenceTests: XCTestCase {
         XCTAssertEqual(result.baseline, bytes)
         XCTAssertEqual(try Data(contentsOf: url), bytes)
         let reencoded = try dictionary(result.document)
-        XCTAssertEqual(reencoded["schema"] as? String, "archi-native-preferences/v4")
+        XCTAssertEqual(reencoded["schema"] as? String, NativePreferenceDocument.currentSchema)
         XCTAssertNil(reencoded["focusGesture"])
     }
 
@@ -81,7 +82,7 @@ final class FocusGesturePersistenceTests: XCTestCase {
         {"form":"Guide light","tone":"Direct","replyLength":0.2,"size":1.1,"adaptive":true,"reduceMotion":true,"quiet":false}
         """.utf8)
         let migrated = try NativePreferenceDocument.decode(legacy)
-        XCTAssertEqual(migrated.schema, "archi-native-preferences/v4")
+        XCTAssertEqual(migrated.schema, NativePreferenceDocument.currentSchema)
         XCTAssertEqual(migrated.preferences?.form, .light)
         XCTAssertEqual(migrated.preferences?.tone, "Direct")
         XCTAssertEqual(migrated.preferences?.visualTreatment, .original)
@@ -155,6 +156,7 @@ final class FocusGesturePersistenceTests: XCTestCase {
     func testVersionTwoCannotCarryTheNewFieldEvenWhenNull() throws {
         var object = try dictionary(NativePreferenceDocument(focusGesture: .init()))
         object["schema"] = "archi-native-preferences/v2"
+        object.removeValue(forKey: "itemLibrary") // v2 predates local designs.
         XCTAssertThrowsError(try NativePreferenceDocument.decode(JSONSerialization.data(withJSONObject: object)))
         object["focusGesture"] = NSNull()
         XCTAssertThrowsError(try NativePreferenceDocument.decode(JSONSerialization.data(withJSONObject: object)))

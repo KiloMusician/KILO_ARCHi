@@ -51,6 +51,12 @@ The Unity project is in [unity/ARCHi](unity/ARCHi). It is pinned to Unity **6000
 
 The preview displays **“Port preview · not connected to saved companion.”** Native assistance and memory remain in ARCHi. Previewing First Light does not grant evolution; equipping the bundled Focus Staff is temporary. The Relay practice rules are local and do not award retained progress. This source includes the separate preview, not a completed native/Unity handoff or full battle-engine port.
 
+## Local Marketplace
+
+Open **Marketplace** (Command–5) for Discover, My items and Create. Three bundled staff recipes support local appearance and approved pointing cues. Collect up to eight designs, make palette/crown/gesture variations, and explicitly import/export bounded JSON recipes. Add persists the collection; Equip applies for this visit; Save preferences keeps the outfit.
+
+**Unregistered items do not affect the canon game.** The local Alpha registry recognizes exact bundled designs, and no item has approved Arena effects yet. Registration, ownership, limited editions and future canon approval are different things. There is no checkout, wallet, NFT issuance or production registry service. Read the [working flow and item policy](docs/LOCAL_MARKETPLACE.md) or [website guide](https://archi-it-begins-when-you-do.channelph.chatgpt.site/marketplace) (currently owner-private).
+
 ## Point at an object of interest
 
 1. Choose **Point at a window** and move KIN's Seed over the window you want to use. A mint outline marks the current window. Hovering and choosing use window metadata; they do not read its contents or invoke a model.

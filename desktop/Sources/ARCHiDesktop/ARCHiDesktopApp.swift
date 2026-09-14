@@ -229,6 +229,7 @@ final class DesktopDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     @objc private func openAssistant() { showWorkspace(.assistant) }
+    @objc private func openMarketplace() { showWorkspace(.marketplace) }
     @objc private func openAppearance() { showWorkspace(.appearance) }
     @objc private func openEvolution() { showWorkspace(.evolution) }
     @objc private func openNodeLab() { showWorkspace(.nodeLab) }
@@ -285,6 +286,7 @@ final class DesktopDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         windowMenu.addItem(item("Appearance", #selector(openAppearance), key: "2"))
         windowMenu.addItem(item("Evolution", #selector(openEvolution), key: "3"))
         windowMenu.addItem(item("Node Lab", #selector(openNodeLab), key: "4"))
+        windowMenu.addItem(item("Marketplace", #selector(openMarketplace), key: "5"))
         windowMenu.addItem(item("Show companion", #selector(showCompanion)))
         windowMenu.addItem(item("Hide companion", #selector(hideCompanion)))
         windowMenu.addItem(item("Stop current work", #selector(stopWork), key: "."))
@@ -301,6 +303,7 @@ final class DesktopDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         quick.addItem(item("Show ARCHi", #selector(showCompanion)))
         quick.addItem(item("Open assistant", #selector(openAssistant)))
         quick.addItem(item("Open Node Lab", #selector(openNodeLab)))
+        quick.addItem(item("Marketplace", #selector(openMarketplace)))
         quick.addItem(item("Appearance", #selector(openAppearance)))
         quick.addItem(item("Settings…", #selector(openSettings)))
         quick.addItem(.separator())

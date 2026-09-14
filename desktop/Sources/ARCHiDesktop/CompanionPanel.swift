@@ -392,7 +392,7 @@ struct FloatingCompanionBody: View {
                         if let playback = store.focusGesturePlayback,
                            playback.purpose != .preview,
                            playback.spatialPreviewID == store.spatialPreview?.id,
-                           store.preferences.equipment.hand == .focusStaff {
+                           store.preferences.equipment.supportsPointing {
                             FocusStaffGestureOverlay(playback: playback, size: size * 0.89,
                                 reduceMotion: store.preferences.quiet || store.preferences.reduceMotion || systemReduceMotion)
                                 .allowsHitTesting(false)

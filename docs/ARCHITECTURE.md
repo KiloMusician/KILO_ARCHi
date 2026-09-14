@@ -19,3 +19,10 @@ The [Unity source project](../unity/ARCHi/README.md) uses bundled KIN artwork, s
 Blender authoring originals, local model installations, private research and user profiles are outside this distribution. Optional Reactor has a local artwork fallback and its own setup. The arc directory remains an isolated synthetic exact-grid evidence lab, not a live ARC competition solver.
 
 Creator provenance, editions, verified ownership and marketplace operations are separate future services. They cannot derive authority from a copied local UID. The [Hampton Designed policy](HAMPTON_DESIGNED.md) preserves MIT permission and excludes private assistant data from transferable records.
+
+
+## Native local items
+
+Marketplace Discover/My items/Create reuses CompanionEquipment and CompanionPresenceArt. Strict bounded CompanionItemPackage recipes have computed content identity; exact bundled catalog matches expose local registration only. NativePreferenceDocument v5 retains a maximum eight recipes through the existing atomic/conflict/recovery path. Equip is session-only until explicit Save preferences. Removal reconciles the library and saved outfit in the same admission. User-kept gesture settings take precedence over creator defaults. Decorative designs cannot point.
+
+All current canonical-effect lists are empty. Unregistered recipes have zero canon battle/progression influence, and the paused Arena does not consume them as gameplay inputs. Production registry signatures, ownership, scarce editions, payments and named-ruleset loadout validation remain future work. See [local marketplace](LOCAL_MARKETPLACE.md).

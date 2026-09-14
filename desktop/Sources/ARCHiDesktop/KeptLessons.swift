@@ -128,8 +128,8 @@ private enum LessonValidation {
 /// A versioned extension of the existing native preference file, not another
 /// memory database. Preferences and explicitly kept lessons can be forgotten separately.
 struct NativePreferenceDocument: Codable, Equatable {
-    static let currentSchema = "archi-native-preferences/v4"
-    private static let previousSchemas = ["archi-native-preferences/v2", "archi-native-preferences/v3"]
+    static let currentSchema = "archi-native-preferences/v5"
+    private static let previousSchemas = ["archi-native-preferences/v2", "archi-native-preferences/v3", "archi-native-preferences/v4"]
     static let maximumBytes = 64 * 1024
     static let maximumLessons = 16
     var schema = Self.currentSchema
@@ -138,6 +138,7 @@ struct NativePreferenceDocument: Codable, Equatable {
     var lessons: [KeptLesson] = []
     var focusGesture: FocusGestureConfiguration? = nil
     var qiMon: LocalQiMon? = nil
+    var itemLibrary: [CompanionItemPackage] = []
 
     static func validateLessonSnapshots(_ snapshots: [LessonSnapshot]) -> Bool {
         snapshots.count <= maximumLessons && snapshots.allSatisfy(\.isValid)
@@ -147,6 +148,8 @@ struct NativePreferenceDocument: Codable, Equatable {
     var isValid: Bool {
         schema == Self.currentSchema && (preferences?.isValid ?? true)
             && (qiMon?.isValid ?? true)
+            && CompanionItemPackage.isValidLibrary(itemLibrary)
+            && (preferences?.equipment.design.map { itemLibrary.contains($0) } ?? true)
             && lessons.allSatisfy(\.isValid)
             && Self.validateLessonSnapshots(lessons.map(LessonSnapshot.init(lesson:)))
     }
@@ -162,7 +165,8 @@ struct NativePreferenceDocument: Codable, Equatable {
         if object.keys.contains("schema") {
             guard let schema = object["schema"] as? String,
                   schema == currentSchema || previousSchemas.contains(schema) else { throw NativePreferenceError.unsupportedSchema }
-            let optional: Set<String> = schema == currentSchema ? ["preferences", "focusGesture", "qiMon"]
+            let optional: Set<String> = schema == currentSchema ? ["preferences", "focusGesture", "qiMon", "itemLibrary"]
+                : schema == "archi-native-preferences/v4" ? ["preferences", "focusGesture", "qiMon"]
                 : schema == "archi-native-preferences/v3" ? ["preferences", "focusGesture"] : ["preferences"]
             try validateKeys(object, required: ["schema", "revision", "lessons"], optional: optional)
             if let preferences = object["preferences"], !(preferences is NSNull) {
@@ -226,6 +230,19 @@ struct NativePreferenceDocument: Codable, Equatable {
     }
 }
 
+extension NativePreferenceDocument {
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        schema = try values.decode(String.self, forKey: .schema)
+        revision = try values.decode(UInt64.self, forKey: .revision)
+        preferences = try values.decodeIfPresent(CompanionPreferences.self, forKey: .preferences)
+        lessons = try values.decode([KeptLesson].self, forKey: .lessons)
+        focusGesture = try values.decodeIfPresent(FocusGestureConfiguration.self, forKey: .focusGesture)
+        qiMon = try values.decodeIfPresent(LocalQiMon.self, forKey: .qiMon)
+        itemLibrary = try values.decodeIfPresent([CompanionItemPackage].self, forKey: .itemLibrary) ?? []
+    }
+}
+
 enum NativePreferenceError: LocalizedError {
     case invalidDocument, unsupportedSchema, tooLarge, conflict, invalidLocation
     var errorDescription: String? {
@@ -252,7 +269,7 @@ enum NativePreferencePersistence {
     static func write(document: NativePreferenceDocument, to url: URL, expected: Data?) throws -> Data? {
         let data = try document.encoded()
         guard try rawData(at: url) == expected else { throw NativePreferenceError.conflict }
-        if document.preferences == nil && document.lessons.isEmpty && document.focusGesture == nil && document.qiMon == nil {
+        if document.preferences == nil && document.lessons.isEmpty && document.focusGesture == nil && document.qiMon == nil && document.itemLibrary.isEmpty {
             if expected != nil { try FileManager.default.removeItem(at: url) }
             return nil
         }

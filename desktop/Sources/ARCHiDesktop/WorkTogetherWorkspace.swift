@@ -195,7 +195,7 @@ struct WorkTogetherWorkspace: View {
                     Spacer(minLength: 0)
                 }
             }
-            if store.preferences.equipment.hand == .focusStaff {
+            if store.preferences.equipment.supportsPointing {
                 HStack(spacing: 6) {
                     Button("Point with staff") {
                         if store.activateEquippedItem() { showsPlacement = true }
@@ -203,7 +203,7 @@ struct WorkTogetherWorkspace: View {
                     .buttonStyle(.bordered).controlSize(.small)
                     .disabled(store.textSelection == nil || store.isWorking || !store.isVisible)
                     .accessibilityIdentifier("work.focus-staff")
-                    .help("Use your kept gesture to highlight this passage and preview a nearby position. Nothing is sent; ARCHi stays in place.")
+                    .help("Use your staff gesture to highlight this passage and preview a nearby position. Nothing is sent; ARCHi stays in place.")
                     Button("Point and explain") { _ = store.pointAndExplainSelection() }
                         .buttonStyle(.bordered).controlSize(.small)
                         .disabled(!store.canPointAndExplainSelection)
@@ -235,14 +235,14 @@ struct WorkTogetherWorkspace: View {
                         if store.practiceFocusGesture() { showsPlacement = true }
                     }
                     .buttonStyle(.bordered).controlSize(.small)
-                    .disabled(store.preferences.equipment.hand != .focusStaff || store.textSelection == nil
+                    .disabled(!store.preferences.equipment.supportsPointing || store.textSelection == nil
                               || store.isWorking || !store.isVisible)
                     .accessibilityIdentifier("focus-gesture.practice")
                     .help("Try your unsaved gesture on this selected passage. No assistant request or automatic movement.")
                     Button("Review gesture") { store.open(.appearance) }
                         .buttonStyle(.borderless).font(.system(size: 11))
                         .accessibilityIdentifier("focus-gesture.review")
-                    if store.preferences.equipment.hand != .focusStaff && store.focusGesturePlayback != nil {
+                    if !store.preferences.equipment.supportsPointing && store.focusGesturePlayback != nil {
                         Button("Stop") { store.stopFocusGesture() }
                             .buttonStyle(.borderless).font(.system(size: 11))
                             .accessibilityLabel("Stop staff gesture")
@@ -254,10 +254,10 @@ struct WorkTogetherWorkspace: View {
             if showsGestureControls {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(gestureStatus)
-                        .lineLimit(store.preferences.equipment.hand == .focusStaff ? 1 : 2)
+                        .lineLimit(store.preferences.equipment.supportsPointing ? 1 : 2)
                         .help(gestureStatus)
                         .accessibilityIdentifier("focus-gesture.work-status")
-                    if store.preferences.equipment.hand == .focusStaff {
+                    if store.preferences.equipment.supportsPointing {
                         Text("Point and explain sends now to \(pointAndExplainDestination).")
                             .lineLimit(1).minimumScaleFactor(0.9)
                             .help(pointAndExplainHelp)
@@ -273,24 +273,24 @@ struct WorkTogetherWorkspace: View {
     }
 
     private var showsGestureControls: Bool {
-        store.preferences.equipment.hand == .focusStaff || store.focusGestureDraft != nil
+        store.preferences.equipment.supportsPointing || store.focusGestureDraft != nil
     }
 
     /// Optional rows reserve their own space; a changing playback message does
     /// not resize the shared document or its selection geometry.
     private var passageActionsHeight: CGFloat {
         80 + (store.activeQiMon != nil ? 32 : 0)
-            + (store.preferences.equipment.hand == .focusStaff ? 32 : 0)
+            + (store.preferences.equipment.supportsPointing ? 32 : 0)
             + (store.focusGestureDraft != nil ? 32 : 0) + (showsGestureControls ? 36 : 0)
     }
 
     private var gestureStatus: String {
-        if store.focusGestureDraft != nil && store.preferences.equipment.hand != .focusStaff {
+        if store.focusGestureDraft != nil && !store.preferences.equipment.supportsPointing {
             return "Equip the Focus Staff in Appearance to practice. Your gesture draft is waiting."
         }
         if !store.focusGestureMessage.isEmpty { return store.focusGestureMessage }
-        return store.focusGestureDraft != nil ? "Practice tries your draft. Point with staff uses your kept gesture."
-            : "Point with staff uses your kept gesture. Edit it in the staff options."
+        return store.focusGestureDraft != nil ? "Practice tries your draft. Point with staff uses your staff gesture."
+            : "Point with staff uses your staff gesture. Edit it in the staff options."
     }
 
     private var pointAndExplainDestination: String {
@@ -303,7 +303,7 @@ struct WorkTogetherWorkspace: View {
     }
 
     private var pointAndExplainHelp: String {
-        "Send an explanation request to \(pointAndExplainDestination) now and point with your kept gesture. "
+        "Send an explanation request to \(pointAndExplainDestination) now and point with your staff gesture. "
             + "Your message adds instructions and stays in the composer. "
             + store.route.disclosure
     }

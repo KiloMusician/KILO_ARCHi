@@ -70,3 +70,12 @@ The public package replaces internal research/accountability commands with verif
 Broader ordinary-day use, sleep/wake, display changes, full VoiceOver traversal, resource budgets, combined backup/restore, update/rollback and another-Mac installation remain open. The generated app is locally signed and staged in the operating system's temporary directory. No notarized installer is included.
 
 No new live Codex, Compare or Reactor acceptance is claimed by these source checks. The source contains optional adapters; installation and a successful connection are distinct from a representative end-to-end provider result. Natural appearance variation is not trained development, authenticated authorship, transferable ownership or market valuation.
+
+
+## Marketplace increment — 14 September 2026
+
+Current authored checkout full native suite: 629 XCTest cases, 32 skipped, zero failures; 234 reported Swift Testing tests with the existing installed-worker opt-in skip. Focused runs overlap these counts. New coverage includes strict recipe imports, content-bound identity/registration, decorative-item limits, all palette/crown render combinations, legacy-save migration, restart, atomic removal/conflict handling and backup restore/undo. Hidden Discover rendering at 630×500 passed; hidden native SwiftUI AX proxies were unavailable and that acceptance is explicitly skipped.
+
+No live models, payments or Arena effects were invoked. Signed Development Review staging passed; it was not installed or launched over an open user session. Full marketplace click-through, native VoiceOver, file-panel interaction and daily-use qualification remain open. Site desktop/mobile checks are separate from native acceptance.
+
+The separately prepared public copy builds and passes its focused marketplace/equipment/persistence selection: 44 XCTest cases, 2 opt-in presentation skips, zero failures. The copy's source allowlist scan reports no findings. The historical Alpha tag and inactive CI template remain unchanged.

@@ -1,6 +1,6 @@
 # Hampton Designed
 
-**Status: approved product policy for the ARCHi Alpha direction.** The creator seal, distinctive creator editions and balanced signature abilities are approved design goals. Issuance, signing, creator authentication, verified editions, ownership transfers and a marketplace are future capabilities. This document does not certify an Alpha character or announce a released service.
+**Status: approved product policy for the ARCHi Alpha direction.** The creator seal, distinctive creator editions and balanced signature abilities are approved design goals. Issuance, signing, creator authentication, verified editions, ownership transfers and a production marketplace are future capabilities. A bounded local recipe collection now exists; see the registration section below. This document does not certify an Alpha character or announce a released service.
 
 ## Code permission and creator endorsement
 
@@ -63,3 +63,10 @@ No transfer implementation is provided by this Alpha. This is the boundary a lat
 - Review applicable asset permissions and attribution separately from the MIT code license.
 
 Until those checks exist and pass, the app must describe creator provenance, editions and ownership as unverified or unavailable. Publication of the code or this policy does not complete them.
+
+
+## Registration and canon
+
+Unregistered items do not affect the canon game. Local custom recipes may change appearance or invoke an explicitly supported desktop utility, but cannot add official stats, abilities, results, rewards, rankings or progression. The native Alpha recognizes exact bundled recipes using a local registry; its canonical-effect list is empty for all designs.
+
+Production registration will require review of the exact design version and its creator evidence, rights and compatibility. Canon gameplay effects additionally need approval for a named ruleset and mode with balance, costs and counterplay. A UID, content hash, NFT, payment, creator-name declaration or copied seal cannot grant that approval. Registering later must not promote earlier sandbox results into canonical history. See [the local marketplace](LOCAL_MARKETPLACE.md).

@@ -32,6 +32,10 @@ struct DesktopRetentionSummary: View {
                         detail: "Kept lessons\(store.hasRetainedQiMon ? ", KIN's identity" : "") and a kept staff gesture save through their explicit Keep, correction or withdrawal actions. Unkept drafts stay in this visit.",
                         destination: .memory, action: "Review kept lessons", id: "knowledge")
                     Divider()
+                    retentionRow("Item collection", state: "\(store.itemLibrary.count) local designs",
+                        detail: "Add to My items saves a recipe immediately. Equip changes this visit; Save preferences keeps the outfit. Remove clears the design and its saved outfit. Import and Create drafts are temporary.",
+                        destination: .marketplace, action: "Review My items", id: "items")
+                    Divider()
                     retentionRow("Development", state: store.evolution.requiresReplacement ? "Saved file needs review" : store.evolution.retentionState.title,
                         detail: developmentDetail + (store.evolution.requiresReplacement ? " " + store.evolution.status : ""),
                         destination: .evolution, action: "Review Save & Load", id: "development")
@@ -59,7 +63,7 @@ struct DesktopRetentionSummary: View {
         }
         let earlier = store.hasSavedPreferences && !store.rememberPreferences
             ? " Turning Remember off leaves your earlier saved settings intact." : ""
-        return "Appearance, items, tone, reply length, motion and sound use Save preferences in What I remember. A kept body uses Save evolution." + earlier
+        return "Appearance, equipped item, tone, reply length, motion and sound use Save preferences in What I remember. A kept body uses Save evolution." + earlier
     }
 
     private var knowledgeState: String {

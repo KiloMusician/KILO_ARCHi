@@ -111,8 +111,18 @@ enum CompanionVisualAsset {
                       recipe: CompanionAppearanceRecipe? = nil, naturalVariation: CompanionNaturalVariation? = nil,
                       equipment: CompanionEquipment = .empty) -> String {
         let label = baseLabel(form: form, family: family, treatment: treatment, recipe: recipe, naturalVariation: naturalVariation)
-        guard let item = equipment.item else { return label }
-        return "\(label) · \(item.title)"
+        let combined = equipment.item.map { "\(label) · \($0.title)" } ?? label
+        // The hosted bridge measures JavaScript string length in UTF-16 units.
+        // Keep short legacy labels exact and never split an emoji or grapheme.
+        guard combined.utf16.count > 80 else { return combined }
+        var result = "", units = 0
+        for character in combined {
+            let count = String(character).utf16.count
+            guard units + count <= 79 else { break }
+            result.append(character)
+            units += count
+        }
+        return result + "…"
     }
 
     private static func baseLabel(form: CompanionForm, family: EvolutionFamily?, treatment: CompanionVisualTreatment,

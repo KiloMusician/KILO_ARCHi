@@ -8,6 +8,7 @@ enum WorkspaceSection: String, CaseIterable, Identifiable {
     case nodeLab = "Node Lab"
     case play = "Habitat & Arena"
     case appearance = "Appearance"
+    case marketplace = "Marketplace"
     case evolution = "Evolution"
     case rhythm = "Personal rhythm"
     case memory = "What I remember"
@@ -47,7 +48,7 @@ struct CompanionPreferences: Codable, Equatable {
     var musicalVolume = 0.35
 
     var isValid: Bool {
-        size.isFinite && (0.65...1.6).contains(size)
+        equipment.isValid && size.isFinite && (0.65...1.6).contains(size)
         && replyLength.isFinite && (0...1).contains(replyLength)
         && musicalVolume.isFinite && (0...1).contains(musicalVolume)
         && ["Calm", "Direct", "Playful", "Warm"].contains(tone)
@@ -162,6 +163,9 @@ final class CompanionStore: ObservableObject {
     @Published private(set) var lessonRevision: UInt64 = 0
     @Published var lessonDraft: LessonCorrectionDraft?
     @Published private(set) var lessonMessage = "Keep only what you want ARCHi to use again."
+    @Published private(set) var itemLibrary: [CompanionItemPackage] = []
+    @Published var marketplaceMessage = "Your collection stays on this Mac. No purchase needed."
+    @Published var importedMarketItem: CompanionItemPackage?
     @Published private(set) var keptFocusGesture: FocusGestureConfiguration?
     @Published private(set) var keptQiMon: LocalQiMon?
     @Published private(set) var qiMonJourneyOrigin: String?
@@ -435,6 +439,7 @@ final class CompanionStore: ObservableObject {
             keptLessons = loaded.document.lessons
             keptFocusGesture = loaded.document.focusGesture
             keptQiMon = loaded.document.qiMon
+            itemLibrary = loaded.document.itemLibrary
             lessonRevision = loaded.document.revision
         } catch {
             preferenceFileReadable = false
@@ -719,7 +724,7 @@ final class CompanionStore: ObservableObject {
     }
 
     var canPointAndExplainSelection: Bool {
-        !isShuttingDown && !isWorking && isVisible && preferences.equipment.hand == .focusStaff
+        !isShuttingDown && !isWorking && isVisible && preferences.equipment.supportsPointing
             && textSelection?.matches(text: sharedText, sourceRevision: sourceRevision) == true
             && canBeginReply
             && pointedExplanationQuestion.utf8.count <= 16_000
@@ -754,12 +759,12 @@ final class CompanionStore: ObservableObject {
             return false
         }
         let pointing = AssistantPointingSnapshot(geometry: geometry, environment: environment,
-            candidate: candidate, gesture: keptFocusGesture ?? FocusGestureConfiguration())
+            candidate: candidate, gesture: effectiveFocusGesture)
         return submit(question: pointedExplanationQuestion, pointing: pointing)
     }
 
     private func isCurrentPointing(_ pointing: AssistantPointingSnapshot) -> Bool {
-        isVisible && preferences.equipment.hand == .focusStaff
+        isVisible && preferences.equipment.supportsPointing
             && textSelection == pointing.geometry.selection
             && pointing.geometry.selection.matches(text: sharedText, sourceRevision: sourceRevision)
             && onObserveSelectedPassage?() == pointing.geometry
@@ -1450,6 +1455,82 @@ final class CompanionStore: ObservableObject {
         }
     }
 
+    // Item recipes share the existing profile's atomic admission and recovery.
+    @discardableResult
+    func collectMarketItem(_ item: CompanionItemPackage) -> Bool {
+        guard !isShuttingDown, item.isValid else {
+            marketplaceMessage = "Choose a valid item recipe before adding it."; return false
+        }
+        guard !itemLibrary.contains(where: { $0.id == item.id }) else {
+            marketplaceMessage = "This exact design is already in My items."; return true
+        }
+        guard itemLibrary.count < CompanionItemPackage.maximumLibraryCount else {
+            marketplaceMessage = "Your local Alpha collection holds eight designs. Remove one before adding another."; return false
+        }
+        var next = preferenceDocument
+        next.itemLibrary.append(item)
+        guard commitPreferenceDocument(next) else { marketplaceMessage = status; return false }
+        marketplaceMessage = "Added \(item.title) to My items on this Mac. Choose Equip when ready."
+        return true
+    }
+
+    @discardableResult
+    func equipMarketItem(_ item: CompanionItemPackage) -> Bool {
+        guard !isShuttingDown, item.isValid, itemLibrary.contains(item) else {
+            marketplaceMessage = "Add this design to My items before equipping it."; return false
+        }
+        preferences.equipment = CompanionEquipment(hand: .focusStaff, design: item)
+        marketplaceMessage = "\(item.title) equipped for this visit. Save choices in What I remember to wear it next time."
+        return true
+    }
+
+    @discardableResult
+    func removeMarketItem(_ item: CompanionItemPackage) -> Bool {
+        guard !isShuttingDown, itemLibrary.contains(item) else { return false }
+        var next = preferenceDocument
+        next.itemLibrary.removeAll { $0.id == item.id }
+        if next.preferences?.equipment.design?.id == item.id { next.preferences?.equipment = .empty }
+        guard commitPreferenceDocument(next) else { marketplaceMessage = status; return false }
+        if preferences.equipment.design?.id == item.id { preferences.equipment = .empty }
+        marketplaceMessage = "Removed \(item.title) from this Mac and any saved outfit. Other choices remain yours."
+        return true
+    }
+
+    func importMarketItem() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.json]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.message = "Review a local ARCHi design recipe before adding it. Maximum 4 KB."
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        do {
+            let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+            guard values.isRegularFile == true, values.isSymbolicLink != true else {
+                throw CompanionItemPackageError.invalidPackage
+            }
+            let handle = try FileHandle(forReadingFrom: url)
+            defer { try? handle.close() }
+            let data = try handle.read(upToCount: CompanionItemPackage.maximumBytes + 1) ?? Data()
+            importedMarketItem = try CompanionItemPackage.decode(data)
+            marketplaceMessage = "Recipe read. Review its appearance, action and attribution before Add to My items."
+        } catch { importedMarketItem = nil; marketplaceMessage = error.localizedDescription }
+    }
+
+    func exportMarketItem(_ item: CompanionItemPackage) {
+        do {
+            let data = try item.encoded()
+            let panel = NSSavePanel()
+            panel.allowedContentTypes = [.json]
+            panel.nameFieldStringValue = "ARCHi-item-\(item.id.prefix(8)).json"
+            panel.message = "Shares this design and its declared license. No personal memory, companion identity or ownership record is included."
+            guard panel.runModal() == .OK, let url = panel.url else { return }
+            try data.write(to: url, options: .atomic)
+            marketplaceMessage = "Exported a copyable design recipe. Export does not create an edition or transfer ownership."
+        } catch { marketplaceMessage = "Could not export the item: \(error.localizedDescription)" }
+    }
+
     func savePreferences() {
         guard rememberPreferences else { status = "Preferences apply to this visit."; return }
         guard preferences.isValid else { status = "Choose valid appearance and reply settings before saving."; return }
@@ -1770,6 +1851,7 @@ extension CompanionStore {
         export.preferences = nil
         export.focusGesture = nil
         export.qiMon = nil
+        export.itemLibrary = []
         return try export.encoded()
     }
 
@@ -1806,6 +1888,7 @@ extension CompanionStore {
             keptLessons = next.lessons
             keptFocusGesture = next.focusGesture
             keptQiMon = next.qiMon
+            itemLibrary = next.itemLibrary
             lessonRevision = next.revision
             return true
         } catch {
@@ -1863,6 +1946,7 @@ extension CompanionStore {
         guard evolution.loadRestoredProfile(origin: loaded.document.preferences?.form ?? .companion) else {
             throw DesktopRecoveryError.blocked("The restored development could not be loaded. " + evolution.status)
         }
+        importedMarketItem = nil
         preferenceDocument = loaded.document
         preferenceBaseline = loaded.baseline
         preferenceFileReadable = true
@@ -1871,6 +1955,7 @@ extension CompanionStore {
         keptLessons = loaded.document.lessons
         keptFocusGesture = loaded.document.focusGesture
         keptQiMon = loaded.document.qiMon
+        itemLibrary = loaded.document.itemLibrary
         lessonRevision = loaded.document.revision
         profileRecoveryBlock = nil
         lessonMessage = "Saved lessons restored. Historical development references do not recreate forgotten lessons."
@@ -1898,11 +1983,15 @@ extension CompanionStore {
         if assistantProvider == .qwen { reply = "Local lesson changed. Send a new question when you are ready." }
     }
 
+    var effectiveFocusGesture: FocusGestureConfiguration {
+        keptFocusGesture ?? preferences.equipment.design?.defaultGesture ?? FocusGestureConfiguration()
+    }
+
     // The staff's learned preference uses the existing preference file. Playback
     // is a short-lived presentation of an explicit command, never a new action owner.
     func beginFocusGestureTeaching() {
         stopFocusGesture()
-        focusGestureDraft = keptFocusGesture ?? FocusGestureConfiguration()
+        focusGestureDraft = effectiveFocusGesture
         focusGestureMessage = "Adjust, preview, then keep the gesture you prefer."
     }
 
@@ -1944,7 +2033,7 @@ extension CompanionStore {
         }
         stopFocusGesture()
         focusGestureDraft = nil
-        focusGestureMessage = "Kept gesture forgotten. The staff uses its original gentle cue."
+        focusGestureMessage = "Kept gesture forgotten. The staff uses its this design’s default cue."
         return true
     }
 
@@ -1956,7 +2045,7 @@ extension CompanionStore {
 
     @discardableResult
     func performFocusGestureOnSelection(configuration: FocusGestureConfiguration, purpose: FocusGesturePurpose) -> Bool {
-        guard purpose != .preview, preferences.equipment.hand == .focusStaff, !isShuttingDown else {
+        guard purpose != .preview, preferences.equipment.supportsPointing, !isShuttingDown else {
             focusGestureMessage = "Equip the Focus Staff before practicing on a passage."
             return false
         }
@@ -2016,7 +2105,7 @@ extension CompanionStore {
         guard let playback = focusGesturePlayback, playback.id == id else { return false }
         let now = monotonicTime()
         if let previewID = playback.spatialPreviewID {
-            guard isVisible, (!isWorking || playback.purpose == .explaining), preferences.equipment.hand == .focusStaff,
+            guard isVisible, (!isWorking || playback.purpose == .explaining), preferences.equipment.supportsPointing,
                   let preview = spatialPreview, preview.id == previewID,
                   preview.isFresh(at: now), isCurrent(preview.ticket),
                   textSelection == preview.geometry.selection,

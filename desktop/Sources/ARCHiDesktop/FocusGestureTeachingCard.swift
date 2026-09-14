@@ -33,7 +33,7 @@ struct FocusGestureTeachingCard: View {
 
     private var keptControls: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text((store.keptFocusGesture ?? FocusGestureConfiguration()).summary)
+            Text((store.effectiveFocusGesture).summary)
                 .font(.system(size: 12))
                 .accessibilityIdentifier("focus-gesture.kept-summary")
             HStack(spacing: 12) {
@@ -46,7 +46,7 @@ struct FocusGestureTeachingCard: View {
                     Button("Forget gesture") { store.forgetFocusGesture() }
                         .buttonStyle(.borderless)
                         .accessibilityIdentifier("focus-gesture.forget")
-                        .help("Return the staff to its original gentle cue.")
+                        .help("Return to this staff design’s default gesture.")
                 }
             }
             .disabled(store.isShuttingDown)
@@ -109,12 +109,16 @@ struct FocusGestureTeachingCard: View {
         .disabled(store.isShuttingDown)
     }
 
+    private var previewEquipment: CompanionEquipment {
+        store.preferences.equipment.supportsPointing ? store.preferences.equipment : CompanionEquipment(hand: .focusStaff)
+    }
+
     private var preview: some View {
         ZStack {
             CompanionPresenceArt(form: store.presentationForm, family: store.presentationFamily,
                 size: 116, reduceMotion: true, treatment: store.preferences.visualTreatment,
                 recipe: store.presentationRecipe, naturalVariation: store.presentationNaturalVariation,
-                equipment: CompanionEquipment(hand: .focusStaff))
+                equipment: previewEquipment)
             if let playback = store.focusGesturePlayback, playback.purpose == .preview {
                 FocusStaffGestureOverlay(playback: playback, size: 116, reduceMotion: staticCue)
             }
@@ -122,7 +126,7 @@ struct FocusGestureTeachingCard: View {
         .frame(width: 132, height: 132)
         .background(ArchiPalette.lilac.opacity(0.10), in: RoundedRectangle(cornerRadius: 18))
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Current companion with Focus Staff, gesture preview")
+        .accessibilityLabel("Current companion with \(previewEquipment.item?.title ?? "Focus Staff"), gesture preview")
         .accessibilityValue(store.focusGesturePlayback?.purpose == .preview
             ? (staticCue ? "Still cue" : "Playing preview") : "Ready to preview")
         .accessibilityIdentifier("focus-gesture.preview-art")
