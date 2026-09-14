@@ -107,7 +107,8 @@ import {
   type BattleTeamId,
   type BattleTeamSetup,
 } from "./battle-engine";
-import { describeBattleAction, displayedBattleRound } from "./battle-presentation";
+import { compareBattleChoices, listBattleChoices, describeBattleAction, displayedBattleRound } from "./battle-presentation";
+import { buildBattleReadback } from "./battle-readback";
 
 declare global {
   interface Window {
@@ -404,6 +405,9 @@ let presentationPulse = 0;
 let battleState: BattleState | null = null;
 let battleOpponentMode: "companion" | "local" = "companion";
 let battleLockedCommands: Partial<Record<BattleTeamId, BattleCommand>> = {};
+// A transient rehearsal belongs to this view of the existing match. It never
+// becomes a real round, a sealed command, or a Journey record.
+let battleWhatIf: { basis: string; report: NonNullable<ReturnType<typeof compareBattleChoices>> } | null = null;
 let battleSequence = 0;
 let battlePracticeBase: Omit<PracticeAttempt, "replay"> & { teams: readonly [BattleTeamSetup, BattleTeamSetup]; opponentMode: "companion" | "local" } | null = null;
 let battleSavedId: string | null = null;
@@ -1183,6 +1187,7 @@ function leaveBattleLab(): void {
 }
 
 function cancelBattleConfirmation(): void {
+  battleWhatIf = null;
   battleReviewGeneration += 1;
   battleLockAbort?.abort();
   battleLockAbort = null;
@@ -1200,9 +1205,29 @@ function currentPracticeAttempt(): PracticeAttempt | null {
 function canKeepBattle(): boolean {
   const attempt = currentPracticeAttempt();
   return !!attempt && !battleKeepBusy && !commitInFlight && !journeyInputInterlocked && !continuityIsOpen() &&
+    (qaMode || (storageWriteAvailable && Boolean(navigator.locks))) &&
     mode === "battle" && attempt.baseRevision === revisionForJourney(journey) &&
     attempt.originDigest === journeyOriginSha256(journey) && battleSavedId !== attempt.replay.battleId &&
     savedPracticeSummaries().length < MAX_KEPT_PRACTICES;
+}
+
+/** Read the existing save owner; a finished round is never itself a saved result. */
+function battleRetention(): { status: "unsaved" | "saving" | "saved" | "session-only" | "unavailable"; message: string } {
+  if (battleKeepBusy) return { status: "saving", message: "Checking the replay and keeping this practice…" };
+  if (battleState && battleSavedId === battleState.battleId) return qaMode
+    ? { status: "session-only", message: "Kept for this test session only. This is not a saved Journey." }
+    : { status: "saved", message: "Kept once in your Journey. You can return to Habitat." };
+  if (battleOpponentMode === "local") return { status: "unavailable", message: "Two-player practice is temporary. Return to Habitat when you are done." };
+  if (battleState?.history.some((event) => event.commands.some((command) => command.action === "surrender"))) {
+    return { status: "unavailable", message: "Ended early. Only completed partner practices can be kept." };
+  }
+  const attempt = currentPracticeAttempt();
+  if (attempt && (attempt.baseRevision !== revisionForJourney(journey) || attempt.originDigest !== journeyOriginSha256(journey))) {
+    return { status: "unavailable", message: "Your Journey changed during this practice. This result has not been kept." };
+  }
+  if (savedPracticeSummaries().length >= MAX_KEPT_PRACTICES) return { status: "unavailable", message: "Your Journey has reached its saved-practice limit. This result remains temporary." };
+  if (!qaMode && (!storageWriteAvailable || !navigator.locks)) return { status: "unavailable", message: "A verified local save is unavailable. This result remains temporary." };
+  return { status: "unsaved", message: boundedNativeText(battleKeepMessage, 300) };
 }
 
 async function keepBattleCompletion(): Promise<void> {
@@ -1252,6 +1277,11 @@ async function keepBattleCompletion(): Promise<void> {
     interaction?.finish();
     if (battleLockAbort === lockAbort) battleLockAbort = null;
     battleKeepBusy = false; commitInFlight = false;
+    if (completedState === battleState && battleSavedId !== attempt.replay.battleId &&
+        battleKeepMessage === "Checking and keeping this practice…") {
+      battleKeepMessage = lockAbort.signal.aborted ? "Keep was cancelled. This result remains temporary."
+        : "This practice was not kept. Your Journey is unchanged.";
+    }
     if (completedState === battleState && mode === "battle") updateBattleInterface();
     publishDesktopJourney();
   }
@@ -1283,10 +1313,42 @@ function boundedNativeText(text: string, bytes: number): string {
   return result;
 }
 
+function currentWhatIfBasis(): string | null {
+  if (!desktopHost?.visible || mode !== "battle" || !battleState || battleState.status !== "active" ||
+      battleLockedCommands.one || journeyInputInterlocked || continuityIsOpen() || commitInFlight || battleKeepBusy) return null;
+  // The automatic partner's sealed move is deliberately never an input. A
+  // human opponent sealing is a public control transition, not a move reveal.
+  return JSON.stringify([battleRevision(battleState), revisionForJourney(journey), battleOpponentMode,
+    battleOpponentMode === "local" && !!battleLockedCommands.two, battleReviewGeneration]);
+}
+
+function currentWhatIfReport(): NonNullable<ReturnType<typeof compareBattleChoices>> | null {
+  if (battleWhatIf && battleWhatIf.basis !== currentWhatIfBasis()) battleWhatIf = null;
+  return battleWhatIf?.report ?? null;
+}
+
+function updateWhatIf(actionId: string): boolean {
+  const basis = currentWhatIfBasis();
+  if (!basis || !battleState) return false;
+  if (actionId === "what-if:close") { battleWhatIf = null; return true; }
+  const current = currentWhatIfReport();
+  const choices = listBattleChoices(battleState, "one");
+  const first = actionId.startsWith("what-if:first:") ? actionId.slice("what-if:first:".length)
+    : current?.firstId ?? choices[0]?.id;
+  const second = actionId.startsWith("what-if:second:") ? actionId.slice("what-if:second:".length)
+    : current?.secondId ?? choices[1]?.id;
+  if (!first || !second) return false;
+  const report = compareBattleChoices(battleState, "one", first, second);
+  if (!report || currentWhatIfBasis() !== basis) return false;
+  battleWhatIf = { basis, report };
+  return true;
+}
+
 /** Available UI intents only. Partner sealed commands are intentionally absent. */
 function projectArena(): DesktopArenaState | null {
-  if (mode !== "habitat" && mode !== "battle") return null;
+  if (mode !== "habitat" && mode !== "battle") { battleWhatIf = null; return null; }
   const state = mode === "battle" ? battleState : null;
+  const whatIf = currentWhatIfReport();
   const blocked = journeyInputInterlocked || continuityIsOpen() || commitInFlight || battleKeepBusy;
   const actions: DesktopArenaAction[] = [];
   const add = (id: string, label: string, detail: string): void => {
@@ -1315,27 +1377,40 @@ function projectArena(): DesktopArenaState | null {
         }
       }
       if (battleLockedCommands.one && battleLockedCommands.two) add("resolve", "Reveal and resolve", "Resolve both sealed commands together using the current rules.");
+      if (currentWhatIfBasis()) {
+        if (!whatIf) add("what-if:open", "What if?", "Compare first-player moves against possible responses. Your match stays unchanged.");
+        else {
+          add("what-if:close", "Close comparison", "Leave this rehearsal. No move has been chosen or sealed.");
+          for (const choice of whatIf.choices) {
+            if (choice.id !== whatIf.secondId) add(`what-if:first:${choice.id}`, choice.label, "Compare as the first option; does not play the move.");
+            if (choice.id !== whatIf.firstId) add(`what-if:second:${choice.id}`, choice.label, "Compare as the second option; does not play the move.");
+          }
+        }
+      }
     }
     if (mode === "battle") add("leave", "Return to Habitat", "Unkept practice stays temporary. Your Journey is unchanged.");
   }
   const phase = !state ? "entry" : state.status === "complete" ? "finished"
     : battleLockedCommands.one ? "sealed" : "planning";
+  const readback = state ? buildBattleReadback(state, battleRetention()) : null;
   const summary = !state ? "Practice together with the same ARCHi. Choose a move and understand its outcome."
     : state.status === "complete" ? `${ui.battleWinner.textContent ?? "Practice complete"} ${battleKeepMessage}`
       : `Round ${state.round}. ${battleLastResult}`;
   const revision = sha256String(JSON.stringify([mode, state ? battleRevision(state) : null,
     revisionForJourney(journey), battleOpponentMode, !!battleLockedCommands.one,
     battleOpponentMode === "local" && !!battleLockedCommands.two, blocked, battleReviewGeneration, battleSavedId,
-    state ? null : battleSetupReadback(), actions]));
+    state ? null : battleSetupReadback(), actions, whatIf ? [whatIf.firstId, whatIf.secondId] : null, readback]));
   return { battleId: state?.battleId ?? null, revision, phase, round: displayedBattleRound(state),
-    summary: boundedNativeText(summary, 500), actions };
+    summary: boundedNativeText(summary, 500), actions, whatIf, readback };
 }
 
 function performArenaAction(actionId: string, expectedRevision: string): boolean {
   const current = projectArena();
   if (!current || current.revision !== expectedRevision || !current.actions.some((action) => action.id === actionId) ||
       (desktopHost && !desktopHost.visible)) return false;
-  if (actionId === "start") {
+  if (actionId.startsWith("what-if:")) {
+    if (!updateWhatIf(actionId)) return false;
+  } else if (actionId === "start") {
     if (mode !== "battle") openBattleLab();
     ui.battleOpponentMode.value = "companion"; updateBattleOpponentMode(); startBattle();
   } else if (actionId === "leave") leaveBattleLab();
@@ -2229,6 +2304,7 @@ function openContinuity(): void {
   target.x = player.x;
   target.y = player.y;
   ui.closeContinuity.focus();
+  publishDesktopJourney();
 }
 
 function closeContinuity(): void {
@@ -2247,6 +2323,7 @@ function closeContinuity(): void {
   const returnFocus = overlayReturnFocus?.isConnected ? overlayReturnFocus : ui.continuityButton;
   overlayReturnFocus = null;
   returnFocus.focus({ preventScroll: true });
+  publishDesktopJourney();
 }
 
 function continuityIsOpen(): boolean {
@@ -4379,6 +4456,7 @@ function applyDesktopVisibility(visible: boolean): void {
   target.y = player.y;
   // The host can pause presentation, never decide a Journey replacement.
   if (!visible) {
+    battleWhatIf = null;
     cancelRelayConfirmation();
     cancelBattleConfirmation();
     desktopInteractions?.invalidate();

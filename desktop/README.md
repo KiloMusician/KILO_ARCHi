@@ -1,12 +1,16 @@
 # ARCHi native desktop
 
-Build the complete app from the repository root:
+From the repository root, prepare a separate locally signed candidate without launching or installing it:
 
-```sh
-npm ci
-./script/build_and_run.sh --verify --review
-```
+    ./script/build_and_run.sh --verify --review --stage-only
 
-For package-only checks: `swift build --package-path desktop` and `swift test --package-path desktop`. Package-only execution lacks the bundled Habitat assets; use the full build script for the complete experience. Quit Development Review normally before replacing its generated bundle.
+Requires macOS 14+ and Swift 6 with the macOS SDK. The current desktop build bundles native art/branding and does not build or start the retained Habitat/Arena. Native assistance and memory remain the product owners; the separate Unity project is a disconnected companion/play preview.
 
-See [the root guide](../README.md) for model setup and persistence, [architecture](../docs/ARCHITECTURE.md) for component ownership, and [Alpha validation](../docs/ALPHA_VALIDATION.md) for actual evidence and limits.
+Package-only checks are available through SwiftPM:
+
+    swift build --package-path desktop
+    swift test --package-path desktop
+
+Some tests require opt-in windowed or provider prerequisites; read skipped checks separately. Quit a selected app normally before replacing its generated bundle. The build script checks running copies and preserves existing bundles during promotion.
+
+See [the root guide](../README.md), [architecture](../docs/ARCHITECTURE.md), [Node Lab](../docs/NODE_LAB.md), and [validation](../docs/ALPHA_VALIDATION.md). These commands describe available checks, not a claim that this exported revision passed them.

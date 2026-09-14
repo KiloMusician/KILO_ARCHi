@@ -40,6 +40,45 @@ struct SpatialStoreTests {
         }
     }
 
+    @Test func focusStaffReusesFreshSelectionWithoutMovingOrChangingTheIndividual() throws {
+        let f = Fixture()
+        f.store.evolution.observeJourneyOrigin(String(repeating: "a", count: 64))
+        let individual = f.store.evolution.naturalVariation
+        let evolutionRevision = f.store.evolution.revision
+        let source = f.store.sharedText
+        #expect(!f.store.activateEquippedItem())
+        #expect(f.store.spatialPreview == nil)
+        f.store.preferences.equipment = CompanionEquipment(hand: .focusStaff)
+        #expect(f.store.activateEquippedItem())
+        let preview = try #require(f.store.spatialPreview)
+        #expect(preview.geometry == f.geometry)
+        #expect(f.moves.isEmpty)
+        #expect(!f.store.isWorking && f.store.compareResults.isEmpty)
+        #expect(f.store.sharedText == source)
+        #expect(f.store.evolution.naturalVariation == individual)
+        #expect(f.store.evolution.revision == evolutionRevision)
+        f.store.preferences.equipment = .empty
+        #expect(f.store.spatialPreview == nil)
+        f.store.applyPlacementPreview()
+        #expect(f.moves.isEmpty)
+    }
+
+    @Test func focusStaffCannotBypassBusyHiddenStaleOrUnavailableGeometry() {
+        let changes: [(CompanionStore) -> Void] = [
+            { $0.isWorking = true }, { $0.hideCompanion() },
+            { $0.invalidateTextSelection(reason: "Scrolled") },
+            { $0.onObserveSelectedPassage = { nil } }
+        ]
+        for change in changes {
+            let f = Fixture()
+            f.store.preferences.equipment = CompanionEquipment(hand: .focusStaff)
+            change(f.store)
+            #expect(!f.store.activateEquippedItem())
+            #expect(f.store.spatialPreview == nil)
+            #expect(f.moves.isEmpty)
+        }
+    }
+
     @Test func previewHasNoMovementAndExplicitApplyChecksActualFrame() throws {
         let f = Fixture()
         let original = f.environment.companionFrame

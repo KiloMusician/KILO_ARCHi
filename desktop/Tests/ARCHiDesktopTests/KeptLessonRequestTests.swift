@@ -24,7 +24,7 @@ struct KeptLessonRequestTests {
             #expect(!request.input.contains("memories"))
             #expect(try decoded(request.localInput)["memories"] == .array([lesson.modelInput]))
         }
-        #expect(AssistantRequest.inputContract == "native-assistant-input/v3")
+        #expect(AssistantRequest.inputContract == "native-assistant-input/v4")
         #expect(baseline.localLessons.isEmpty)
         #expect(baseline.localLessonDigest == nil)
     }

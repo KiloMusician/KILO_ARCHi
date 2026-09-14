@@ -5,7 +5,7 @@ import Darwin
 enum AssistantConnectionState: String { case disconnected = "Disconnected", connecting = "Connecting", ready = "Connected", failed = "Unavailable" }
 
 struct AssistantRequest: Sendable {
-    static let inputContract = "native-assistant-input/v3"
+    static let inputContract = "native-assistant-input/v4"
 
     let prompt: String
     let sourceName: String?
@@ -14,7 +14,9 @@ struct AssistantRequest: Sendable {
     let placementRevision: UInt64
     let settings: AssistantSettingsSnapshot
     let localLessons: [LessonSnapshot]
+    let localConversation: [AssistantConversationExchange]
     let revisionTarget: RevisionTarget?
+    let companion: LocalQiMon.Character?
     var selection: DocumentSelection? = nil
 
     var tone: String { settings.tone }
@@ -23,16 +25,19 @@ struct AssistantRequest: Sendable {
     init(prompt: String, sourceName: String?, sourceText: String, sourceRevision: UInt64,
          placementRevision: UInt64, tone: String, replyLength: Double, selection: DocumentSelection? = nil,
          role: EvolutionRole? = nil, helpStyle: EvolutionHelpStyle? = nil,
-         localLessons: [LessonSnapshot] = [], revisionTarget: RevisionTarget? = nil) {
+         localLessons: [LessonSnapshot] = [], revisionTarget: RevisionTarget? = nil,
+         companion: LocalQiMon.Character? = nil, localConversation: [AssistantConversationExchange] = []) {
         self.init(prompt: prompt, sourceName: sourceName, sourceText: sourceText,
             sourceRevision: sourceRevision, placementRevision: placementRevision,
             settings: AssistantSettingsSnapshot(tone: tone, replyLength: replyLength, role: role, helpStyle: helpStyle),
-            selection: selection, localLessons: localLessons, revisionTarget: revisionTarget)
+            selection: selection, localLessons: localLessons, revisionTarget: revisionTarget, companion: companion,
+            localConversation: localConversation)
     }
 
     init(prompt: String, sourceName: String?, sourceText: String, sourceRevision: UInt64,
          placementRevision: UInt64, settings: AssistantSettingsSnapshot, selection: DocumentSelection? = nil,
-         localLessons: [LessonSnapshot] = [], revisionTarget: RevisionTarget? = nil) {
+         localLessons: [LessonSnapshot] = [], revisionTarget: RevisionTarget? = nil,
+         companion: LocalQiMon.Character? = nil, localConversation: [AssistantConversationExchange] = []) {
         self.prompt = prompt
         self.sourceName = sourceName
         self.sourceText = sourceText
@@ -41,7 +46,9 @@ struct AssistantRequest: Sendable {
         self.settings = settings
         self.selection = selection
         self.localLessons = localLessons
+        self.localConversation = localConversation
         self.revisionTarget = revisionTarget
+        self.companion = companion
     }
 
     var hasValidSelection: Bool {
@@ -49,6 +56,28 @@ struct AssistantRequest: Sendable {
     }
 
     var hasValidLocalLessons: Bool { NativePreferenceDocument.validateLessonSnapshots(localLessons) }
+    var hasValidLocalConversation: Bool { AssistantConversation.validate(localConversation) }
+
+    var localConversationDigest: String? { AssistantConversation.digest(for: localConversation) }
+    var localConversationUTF8Bytes: Int { AssistantConversation.utf8ByteCount(for: localConversation) }
+    var localSourceIDs: [String] { sourceIDs + AssistantConversation.sourceIDs(for: localConversation) }
+
+    func replacingLocalConversation(_ exchanges: [AssistantConversationExchange]) -> AssistantRequest {
+        AssistantRequest(prompt: prompt, sourceName: sourceName, sourceText: sourceText,
+            sourceRevision: sourceRevision, placementRevision: placementRevision, settings: settings,
+            selection: selection, localLessons: localLessons, revisionTarget: revisionTarget,
+            companion: companion, localConversation: exchanges)
+    }
+
+    /// The common v4 input is unchanged. Only local requests add this separately
+    /// versioned conversation envelope; no conversation text crosses to Codex.
+    var localContextInput: String {
+        guard let conversation = AssistantConversation.modelInput(for: localConversation),
+              var value = try? JSONDecoder().decode(JSONValue.self, from: Data(input.utf8)).object else { return input }
+        value["localConversation"] = conversation
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        return String(decoding: (try? encoder.encode(JSONValue.object(value))) ?? Data(), as: UTF8.self)
+    }
 
     var hasValidRevisionTarget: Bool {
         guard let revisionTarget else { return true }
@@ -77,13 +106,18 @@ struct AssistantRequest: Sendable {
 
     private func providerInput(includeLocalLessons: Bool) -> String {
         let lessons = includeLocalLessons ? localLessons : []
-        guard revisionTarget != nil || !lessons.isEmpty,
-              var value = try? JSONDecoder().decode(JSONValue.self, from: Data(input.utf8)).object else { return input }
+        let base = includeLocalLessons ? localContextInput : input
+        let suppliedSourceIDs = includeLocalLessons ? localSourceIDs : sourceIDs
+        guard revisionTarget != nil || !lessons.isEmpty || (includeLocalLessons && !localConversation.isEmpty),
+              var value = try? JSONDecoder().decode(JSONValue.self, from: Data(base.utf8)).object else { return base }
         if !lessons.isEmpty { value["memories"] = .array(lessons.map(\.modelInput)) }
+        if includeLocalLessons && !localConversation.isEmpty {
+            value["sources"] = .array(suppliedSourceIDs.map { .object(["id": .string($0), "label": .string($0)]) })
+        }
         if let revisionTarget {
-            value["sources"] = .array(sourceIDs.map { .object(["id": .string($0), "label": .string($0)]) })
+            value["sources"] = .array(suppliedSourceIDs.map { .object(["id": .string($0), "label": .string($0)]) })
             value["outputSchema"] = PassageRevisionValidator.schema(target: revisionTarget,
-                sourceIDs: sourceIDs, memoryIDs: lessons.map(\.modelID))
+                sourceIDs: suppliedSourceIDs, memoryIDs: lessons.map(\.modelID))
         }
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
         return String(decoding: (try? encoder.encode(JSONValue.object(value))) ?? Data(), as: UTF8.self)
@@ -104,6 +138,9 @@ struct AssistantRequest: Sendable {
                 ? selection!.input : .null
         ]
         if let revisionTarget { data["revisionTarget"] = revisionTarget.input }
+        // Only a fixed display name crosses the assistant boundary. The local
+        // owner association, origin digest and welcome date remain on this Mac.
+        if companion == .kin { data["companion"] = .object(["displayName": .string("KIN")]) }
         if let role = settings.role { data["role"] = .string(role.rawValue) }
         if let helpStyle = settings.helpStyle { data["helpStyle"] = .string(helpStyle.rawValue) }
         return String(decoding: (try? JSONEncoder().encode(JSONValue.object(data))) ?? Data(), as: UTF8.self)

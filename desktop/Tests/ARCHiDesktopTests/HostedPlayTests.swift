@@ -212,6 +212,134 @@ final class HostedPlayTests: XCTestCase {
         await replacement.shutdown()
     }
 
+    func testVersionThreeWhatIfAndLegacyProjectionsDecodeWithoutChangingLegacyShape() throws {
+        let session = UUID()
+        let current = try HostedPlayProjection.decode(whatIfProjection(session: session), sessionID: session, after: 0)
+        XCTAssertEqual(current.version, 3)
+        XCTAssertEqual(current.arena?.whatIf?.firstId, "pulse")
+        XCTAssertEqual(current.arena?.whatIf?.cases.first?.second, "Both recover Spark.")
+        var legacy = whatIfProjection(session: session)
+        legacy["version"] = 2
+        var arena = try XCTUnwrap(legacy["arena"] as? [String: Any]); arena.removeValue(forKey: "whatIf")
+        legacy["arena"] = arena
+        XCTAssertNil(try HostedPlayProjection.decode(legacy, sessionID: session, after: 0).arena?.whatIf)
+        XCTAssertEqual(try HostedPlayProjection.decode(projection(session: session), sessionID: session, after: 0).version, 1)
+        arena["whatIf"] = NSNull(); legacy["arena"] = arena
+        XCTAssertThrowsError(try HostedPlayProjection.decode(legacy, sessionID: session, after: 0), "v2 keeps its historical closed shape")
+    }
+
+    func testVersionThreeRequiresNullableWhatIfAndExactNestedKeys() throws {
+        let session = UUID(), original = whatIfProjection(session: session)
+        var arena = try XCTUnwrap(original["arena"] as? [String: Any]), candidate = original
+        arena["whatIf"] = NSNull(); candidate["arena"] = arena
+        XCTAssertNil(try HostedPlayProjection.decode(candidate, sessionID: session, after: 0).arena?.whatIf)
+        arena.removeValue(forKey: "whatIf"); candidate["arena"] = arena
+        XCTAssertThrowsError(try HostedPlayProjection.decode(candidate, sessionID: session, after: 0))
+        for expanded in ["root", "choice", "case"] {
+            var changed = whatIfDictionary()
+            switch expanded {
+            case "root": changed["hiddenMove"] = "guard"
+            case "choice":
+                var choices = changed["choices"] as! [[String: Any]]; choices[0]["permission"] = true; changed["choices"] = choices
+            default:
+                var cases = changed["cases"] as! [[String: Any]]; cases[0]["probability"] = 0.9; changed["cases"] = cases
+            }
+            arena["whatIf"] = changed; candidate["arena"] = arena
+            XCTAssertThrowsError(try HostedPlayProjection.decode(candidate, sessionID: session, after: 0), expanded)
+        }
+    }
+
+    func testWhatIfRejectsDuplicateUnknownAndUnboundedChoicesAndCases() throws {
+        let session = UUID(), original = whatIfProjection(session: session)
+        let good = whatIfDictionary(), choices = good["choices"] as! [[String: Any]], cases = good["cases"] as! [[String: Any]]
+        var invalid: [[String: Any]] = []
+        for (key, value) in [("firstId", "missing"), ("firstId", "guard"), ("secondId", ""), ("firstId", String(repeating: "x", count: 161))] {
+            var changed = good; changed[key] = value; invalid.append(changed)
+        }
+        for list in [[], [choices[0]], [choices[0], choices[0]], Array(repeating: choices[0], count: 8)] {
+            var changed = good; changed["choices"] = list; invalid.append(changed)
+        }
+        for list in [[], [cases[0], cases[0]], Array(repeating: cases[0], count: 8)] {
+            var changed = good; changed["cases"] = list; invalid.append(changed)
+        }
+        for (key, value) in [("id", ""), ("label", String(repeating: "🦋", count: 31)), ("detail", String(repeating: "x", count: 301))] {
+            var changed = good, list = choices; list[0][key] = value; changed["choices"] = list; invalid.append(changed)
+        }
+        for key in ["opponentId", "opponentLabel", "first", "second"] {
+            for value in ["", Double.nan, Double.infinity, true] as [Any] {
+                var changed = good, list = cases; list[0][key] = value; changed["cases"] = list; invalid.append(changed)
+            }
+        }
+        for (key, limit) in [("opponentId", 160), ("opponentLabel", 120), ("first", 700), ("second", 700)] {
+            var changed = good, list = cases; list[0][key] = String(repeating: "x", count: limit + 1); changed["cases"] = list; invalid.append(changed)
+        }
+        for changed in invalid {
+            var candidate = original, arena = original["arena"] as! [String: Any]
+            arena["whatIf"] = changed; candidate["arena"] = arena
+            XCTAssertThrowsError(try HostedPlayProjection.decode(candidate, sessionID: session, after: 0))
+        }
+    }
+
+    func testWhatIfOnlyAllowedInActivePlanningAndArenaModes() throws {
+        let session = UUID(), original = whatIfProjection(session: session)
+        for override in [["phase": "sealed"], ["phase": "finished"], ["phase": "entry", "battleId": NSNull(), "round": 0],
+                         ["battleId": NSNull()], ["round": 0], ["round": Double.nan], ["round": Double.infinity]] as [[String: Any]] {
+            var candidate = original, arena = original["arena"] as! [String: Any]
+            arena.merge(override) { _, new in new }; candidate["arena"] = arena
+            XCTAssertThrowsError(try HostedPlayProjection.decode(candidate, sessionID: session, after: 0))
+        }
+        var candidate = original; candidate["mode"] = "field"
+        XCTAssertThrowsError(try HostedPlayProjection.decode(candidate, sessionID: session, after: 0))
+    }
+
+    func testWhatIfMaximumValidBranchShapeAndCombinedPayloadBudget() throws {
+        let session = UUID(); var candidate = whatIfProjection(session: session)
+        let choices = (0..<7).map { ["id": String($0).padding(toLength: 160, withPad: "x", startingAt: 0),
+                                    "label": String(repeating: "l", count: 120), "detail": String(repeating: "d", count: 300)] }
+        let cases = (0..<7).map { ["opponentId": String($0).padding(toLength: 160, withPad: "x", startingAt: 0),
+                                  "opponentLabel": String(repeating: "l", count: 120), "first": String(repeating: "a", count: 700), "second": String(repeating: "b", count: 700)] }
+        var arena = candidate["arena"] as! [String: Any]
+        arena["whatIf"] = ["choices": choices, "firstId": choices[0]["id"]!, "secondId": choices[1]["id"]!, "cases": cases]
+        candidate["arena"] = arena
+        XCTAssertEqual(try HostedPlayProjection.decode(candidate, sessionID: session, after: 0).arena?.whatIf?.cases.count, 7)
+        arena["actions"] = (0..<32).map { ["id": String($0).padding(toLength: 160, withPad: "x", startingAt: 0),
+                                           "label": String(repeating: "l", count: 120), "detail": String(repeating: "d", count: 300)] }
+        candidate["arena"] = arena
+        XCTAssertGreaterThan(try JSONSerialization.data(withJSONObject: candidate).count, 32_768)
+        XCTAssertThrowsError(try HostedPlayProjection.decode(candidate, sessionID: session, after: 0))
+    }
+
+    func testDecodedWhatIfOwnsValuesAndRejectedGateMessageDoesNotAdvance() throws {
+        var gate = HostedPlayProjectionGate(); gate.begin()
+        let original = whatIfProjection(session: gate.sessionID)
+        let changedCase = NSMutableDictionary(dictionary: (whatIfDictionary()["cases"] as! [[String: Any]])[0])
+        var candidate = original, whatIf = whatIfDictionary(), arena = original["arena"] as! [String: Any]
+        whatIf["cases"] = [changedCase]; arena["whatIf"] = whatIf; candidate["arena"] = arena
+        let admitted = try gate.receive(candidate)
+        changedCase["first"] = "Mutated after receipt"
+        XCTAssertEqual(admitted.arena?.whatIf?.cases.first?.first, "Your Pulse meets their shield.")
+        candidate["sequence"] = 2; arena["whatIf"] = ["firstId": "unknown"]; candidate["arena"] = arena
+        XCTAssertThrowsError(try gate.receive(candidate)); XCTAssertEqual(gate.sequence, 1)
+        var repaired = original; repaired["sequence"] = 2
+        XCTAssertEqual(try gate.receive(repaired).sequence, 2)
+    }
+
+    private func whatIfDictionary() -> [String: Any] {
+        ["choices": [["id": "pulse", "label": "Pulse", "detail": "Use Spark."], ["id": "guard", "label": "Guard", "detail": "Recover Spark."]],
+         "firstId": "pulse", "secondId": "guard",
+         "cases": [["opponentId": "guard", "opponentLabel": "Guard", "first": "Your Pulse meets their shield.", "second": "Both recover Spark."]]]
+    }
+
+    private func whatIfProjection(session: UUID) -> [String: Any] {
+        var value = projection(session: session)
+        value["version"] = 3; value["originDigest"] = String(repeating: "a", count: 64); value["practices"] = []
+        value["mode"] = "battle"
+        value["arena"] = ["battleId": UUID().uuidString, "revision": String(repeating: "a", count: 64), "phase": "planning", "round": 1,
+                          "summary": "Compare two choices.", "actions": [["id": "what-if:close", "label": "Close comparison", "detail": "Return to moves."]],
+                          "whatIf": whatIfDictionary()]
+        return value
+    }
+
     private var authority: String { "127.0.0.1:43822" }
     private func request(_ line: String, extra: String = "") -> Data { Data("\(line)\r\nHost: \(authority)\r\n\(extra)\r\n".utf8) }
     private func assetsDirectory() throws -> URL {

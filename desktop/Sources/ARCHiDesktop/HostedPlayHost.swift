@@ -13,7 +13,7 @@ struct HostedPlayDownloadReceipt: Equatable {
 }
 
 typealias HostedPlayAppearanceRenderer = @MainActor (CompanionForm, EvolutionFamily?, CompanionVisualTreatment,
-    CompanionAppearanceRecipe?, CompanionNaturalVariation?) -> Data?
+    CompanionAppearanceRecipe?, CompanionNaturalVariation?, CompanionEquipment) -> Data?
 
 @MainActor
 final class HostedPlayHost: NSObject, ObservableObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler, WKDownloadDelegate {
@@ -23,8 +23,22 @@ final class HostedPlayHost: NSObject, ObservableObject, WKNavigationDelegate, WK
     @Published private(set) var status = "Open Habitat to start the bundled game."
     @Published private(set) var webView: WKWebView?
     @Published private(set) var projection: HostedPlayProjection? {
-        didSet { if let origin = projection?.originDigest { onJourneyOriginChanged?(origin) } }
+        didSet {
+            // Presentation ownership is separate from match authority. A late
+            // popover dismissal must not close a later rehearsal in this match.
+            if projection?.arena?.whatIf == nil {
+                whatIfPresentationID = nil
+            } else if oldValue?.arena?.whatIf == nil || oldValue?.sessionId != projection?.sessionId
+                        || oldValue?.arena?.battleId != projection?.arena?.battleId {
+                whatIfPresentationID = UUID()
+            }
+            reconcileCoaching()
+            if let origin = projection?.originDigest { onJourneyOriginChanged?(origin) }
+            onJourneyProjectionChanged?(projection)
+        }
     }
+    @Published private(set) var whatIfPresentationID: UUID?
+    @Published private(set) var coaching = HostedArenaCoaching()
     @Published private(set) var lastDownload: HostedPlayDownloadReceipt?
     @Published private(set) var transferStatus = "Use Continuity in the game to review or download a Journey copy."
     @Published private(set) var rejectedMessageCount = 0
@@ -49,6 +63,7 @@ final class HostedPlayHost: NSObject, ObservableObject, WKNavigationDelegate, WK
     private var retryAppearanceAfterReady: (@MainActor () -> Void)?
     var onVisibilityChanged: ((Bool) -> Void)?
     var onJourneyOriginChanged: ((String) -> Void)?
+    var onJourneyProjectionChanged: ((HostedPlayProjection?) -> Void)?
     private(set) var isVisible = false
     private var isShutDown = false
     private var isStopping = false
@@ -70,8 +85,9 @@ final class HostedPlayHost: NSObject, ObservableObject, WKNavigationDelegate, WK
     static let maximumArchiveBytes = 2 * 1024 * 1024
 
     init(profile: HostedPlayProfile = .current, assetDirectory: URL? = Bundle.main.resourceURL?.appendingPathComponent("Play"),
-         appearanceRenderer: @escaping HostedPlayAppearanceRenderer = { form, family, treatment, recipe, natural in
-             CompanionPresenceArt.png(form: form, family: family, treatment: treatment, recipe: recipe, naturalVariation: natural)
+         appearanceRenderer: @escaping HostedPlayAppearanceRenderer = { form, family, treatment, recipe, natural, equipment in
+             CompanionPresenceArt.png(form: form, family: family, treatment: treatment, recipe: recipe,
+                naturalVariation: natural, equipment: equipment)
          }) {
         self.profile = profile; self.assetDirectory = assetDirectory; self.appearanceRenderer = appearanceRenderer
         super.init()
@@ -121,13 +137,62 @@ final class HostedPlayHost: NSObject, ObservableObject, WKNavigationDelegate, WK
 
     func retry() { guard state == .unavailable else { return }; start() }
 
+    private var coachingContext: HostedArenaCoaching.Context? {
+        guard !isShutDown, !isStopping, state == .ready, isVisible, !arenaCommandPending,
+              let projection, projection.visible, projection.readiness == .ready,
+              projection.mode == .battle, let journey = projection.revision,
+              let arena = projection.arena, arena.phase == .planning, arena.whatIf == nil,
+              let battleID = arena.battleId else { return nil }
+        return .init(sessionID: sessionID, visibilityRevision: visibilityRevision,
+            journeyRevision: journey, arenaRevision: arena.revision, battleID: battleID)
+    }
+
+    var coachingChoices: [HostedArenaProjection.Action] {
+        HostedArenaCoaching.legalChoices(from: projection?.arena?.actions ?? [])
+    }
+
+    var canBeginCoaching: Bool { coachingContext != nil && !coachingChoices.isEmpty && coaching.session == nil }
+
+    private func reconcileCoaching() {
+        guard coaching.session != nil else { return }
+        coaching.reconcile(context: coachingContext, choices: coachingChoices)
+    }
+
+    @discardableResult func beginCoaching() -> UUID? {
+        reconcileCoaching()
+        guard canBeginCoaching, let context = coachingContext else { return nil }
+        return coaching.begin(context: context, choices: coachingChoices)
+    }
+
+    @discardableResult func offerCoaching(sessionID: UUID, actionID: String, reason: String) -> Bool {
+        reconcileCoaching()
+        guard let context = coachingContext else { return false }
+        return coaching.offer(sessionID: sessionID, actionID: actionID, reason: reason,
+            context: context, choices: coachingChoices)
+    }
+
+    /// Returns a legal selection for the existing native draft. No game intent
+    /// is sent; the player must still use the ordinary Play control.
+    func acceptCoaching(sessionID: UUID) -> HostedArenaProjection.Action? {
+        reconcileCoaching()
+        guard let context = coachingContext else { return nil }
+        return coaching.accept(sessionID: sessionID, context: context, choices: coachingChoices)
+    }
+
+    func dismissCoaching(sessionID: UUID) { coaching.dismiss(sessionID: sessionID) }
+
     /// The action ID names an existing legal game intent. Swift never resolves a
     /// turn, chooses the partner's move, or writes game history.
     func performArenaAction(_ action: HostedArenaProjection.Action, revision: String) {
         guard !isShutDown, !isStopping, state == .ready, isVisible, !arenaCommandPending,
-              let projection, projection.visible, projection.version == 2,
+              let projection, projection.visible, [2, 3, 4].contains(projection.version),
               let arena = projection.arena, arena.revision == revision, arena.actions.contains(action),
               let view = webView, HostedPlayNavigation.allowsDocument(view.url, profile: profile) else { return }
+        // A keyboard shortcut must not play a turn while someone is composing
+        // or considering advice. Leaving remains available and retires advice.
+        reconcileCoaching()
+        guard coaching.session == nil || action.id == "leave" else { return }
+        coaching.reset()
         let commandID = UUID(), session = sessionID, visibility = visibilityRevision
         arenaCommandID = commandID; arenaCommandPending = true; arenaStatus = ""
         let payload: [String: Any] = ["version": 1, "host": "archi-desktop", "sessionId": session.uuidString,
@@ -153,6 +218,7 @@ final class HostedPlayHost: NSObject, ObservableObject, WKNavigationDelegate, WK
     }
 
     private func retireArenaCommand() {
+        coaching.reset()
         arenaCommandID = nil; arenaCommand?.cancel(); arenaCommand = nil
         arenaCommandPending = false; arenaStatus = ""
     }
@@ -160,15 +226,17 @@ final class HostedPlayHost: NSObject, ObservableObject, WKNavigationDelegate, WK
     func updateAppearance(form: CompanionForm, family: EvolutionFamily?, reduceMotion: Bool,
                           treatment: CompanionVisualTreatment = .original,
                           expressionPNG: Data? = nil, expressionRevision: UInt64 = 0,
-                          recipe: CompanionAppearanceRecipe? = nil, naturalVariation: CompanionNaturalVariation? = nil) {
+                          recipe: CompanionAppearanceRecipe? = nil, naturalVariation: CompanionNaturalVariation? = nil,
+                          equipment: CompanionEquipment = .empty) {
         let usingExpression = expressionPNG != nil && !reduceMotion
-        let id = CompanionVisualAsset.appearanceID(form: form, family: family, treatment: treatment, recipe: recipe, naturalVariation: naturalVariation)
+        let id = CompanionVisualAsset.appearanceID(form: form, family: family, treatment: treatment,
+            recipe: recipe, naturalVariation: naturalVariation, equipment: equipment)
             + (usingExpression ? "-expression-\(expressionRevision)" : "")
         // A newer request, including a return to the last successfully drawn
         // appearance, retires a previous failed request's one readiness retry.
         retryAppearanceAfterReady = nil
         guard appearance?.id != id || appearance?.reduceMotion != reduceMotion else { return }
-        guard let bytes = usingExpression ? expressionPNG : appearanceRenderer(form, family, treatment, recipe, naturalVariation), bytes.count < 1_400_000 else {
+        guard let bytes = usingExpression ? expressionPNG : appearanceRenderer(form, family, treatment, recipe, naturalVariation, equipment), bytes.count < 1_400_000 else {
             recordAppearanceDelivery("render-unavailable id=\(id)")
             // ImageRenderer may be unavailable before AppKit finishes starting.
             // Retain the latest requested inputs for one later ready transition;
@@ -176,11 +244,12 @@ final class HostedPlayHost: NSObject, ObservableObject, WKNavigationDelegate, WK
             retryAppearanceAfterReady = { [weak self] in
                 self?.updateAppearance(form: form, family: family, reduceMotion: reduceMotion,
                     treatment: treatment, expressionPNG: expressionPNG, expressionRevision: expressionRevision,
-                    recipe: recipe, naturalVariation: naturalVariation)
+                    recipe: recipe, naturalVariation: naturalVariation, equipment: equipment)
             }
             return
         }
-        let label = CompanionVisualAsset.label(form: form, family: family, treatment: treatment, recipe: recipe, naturalVariation: naturalVariation)
+        let label = CompanionVisualAsset.label(form: form, family: family, treatment: treatment,
+            recipe: recipe, naturalVariation: naturalVariation, equipment: equipment)
         appearance = (id, label, "data:image/png;base64," + bytes.base64EncodedString(), reduceMotion)
         sendAppearance()
     }

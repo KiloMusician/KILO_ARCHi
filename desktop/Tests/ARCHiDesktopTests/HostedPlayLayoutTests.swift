@@ -89,12 +89,58 @@ final class HostedPlayLayoutTests: XCTestCase {
                 XCTAssertEqual(before, individual, "Individual details must not rewrite Journey")
                 XCTAssertEqual(host.sessionID, originalSession, "Same-family recipe changes must retain the mounted Habitat")
             }
+            let equipped = CompanionEquipment(hand: .focusStaff)
+            let equippedID = CompanionVisualAsset.appearanceID(form: .companion, family: nil,
+                treatment: .pearlStudy, naturalVariation: natural, equipment: equipped)
+            host.updateAppearance(form: .companion, family: nil, reduceMotion: true,
+                treatment: .pearlStudy, naturalVariation: natural, equipment: equipped)
+            let equippedRevision = try await waitForForm(equippedID)
+            XCTAssertEqual(before, equippedRevision, "Equipping changes artwork without changing Journey")
+            XCTAssertEqual(host.projection?.originDigest, journeyOrigin)
+            XCTAssertEqual(host.sessionID, originalSession)
+            XCTAssertTrue(host.webView === view)
+            host.updateAppearance(form: .companion, family: nil, reduceMotion: true,
+                treatment: .pearlStudy, naturalVariation: natural, equipment: .empty)
+            let unequippedID = CompanionVisualAsset.appearanceID(form: .companion, family: nil,
+                treatment: .pearlStudy, naturalVariation: natural)
+            let unequippedRevision = try await waitForForm(unequippedID)
+            XCTAssertEqual(before, unequippedRevision, "Removing the staff restores the same individual")
             host.updateAppearance(form: .companion, family: nil, reduceMotion: true, treatment: .original)
             let returned = try await waitForForm("Companion:origin")
             XCTAssertEqual(before, returned)
+            let particleID = CompanionVisualAsset.appearanceID(form: .particle, family: nil,
+                treatment: .original, naturalVariation: natural)
+            host.updateAppearance(form: .particle, family: nil, reduceMotion: true,
+                naturalVariation: natural)
+            let particleRevision = try await waitForForm(particleID)
+            XCTAssertEqual(before, particleRevision, "Particle light must retain the existing Journey")
+            XCTAssertEqual(host.projection?.originDigest, journeyOrigin)
+            XCTAssertEqual(host.sessionID, originalSession)
+            XCTAssertTrue(host.webView === view, "Particle light must reuse the retained native Habitat view")
+            let equippedParticleID = CompanionVisualAsset.appearanceID(form: .particle, family: nil,
+                treatment: .original, naturalVariation: natural, equipment: equipped)
+            host.updateAppearance(form: .particle, family: nil, reduceMotion: true,
+                naturalVariation: natural, equipment: equipped)
+            let equippedParticleRevision = try await waitForForm(equippedParticleID)
+            XCTAssertEqual(before, equippedParticleRevision, "Particle light's staff is presentation, not new Journey state")
+            XCTAssertEqual(host.projection?.originDigest, journeyOrigin)
+            XCTAssertEqual(host.sessionID, originalSession)
+            XCTAssertTrue(host.webView === view)
+            for form in [CompanionForm.kinSeed, .kinSimple, .kin, .kinSeed] {
+                let id = CompanionVisualAsset.appearanceID(form: form, family: nil, treatment: .original)
+                host.updateAppearance(form: form, family: nil, reduceMotion: true)
+                let delivered = try await waitForForm(id)
+                XCTAssertEqual(before, delivered, "KIN's form changes must retain the existing Journey")
+                XCTAssertEqual(host.projection?.originDigest, journeyOrigin)
+                XCTAssertEqual(host.sessionID, originalSession)
+                XCTAssertTrue(host.webView === view, "KIN reuses the existing Habitat host")
+            }
             host.updateAppearance(form: .light, family: nil, reduceMotion: true)
             let after = try await waitForForm("Guide light:origin")
             XCTAssertEqual(before, after, "Changing the native body must retain the same Journey")
+            XCTAssertEqual(host.projection?.originDigest, journeyOrigin, "Returning to Guide light must preserve the individual")
+            XCTAssertEqual(host.sessionID, originalSession)
+            XCTAssertTrue(host.webView === view)
             await host.shutdown()
         } catch {
             await host.shutdown()
@@ -108,17 +154,22 @@ final class HostedPlayLayoutTests: XCTestCase {
             throw XCTSkip("Set bundled assets to exercise deterministic initial-render failure recovery in the real native host.")
         }
         var rendered: [CompanionForm] = []
+        var renderedEquipment: [CompanionEquipment] = []
+        let equipped = CompanionEquipment(hand: .focusStaff)
         let host = HostedPlayHost(profile: .acceptance, assetDirectory: URL(fileURLWithPath: assets),
-            appearanceRenderer: { form, family, treatment, recipe, natural in
+            appearanceRenderer: { form, family, treatment, recipe, natural, equipment in
                 rendered.append(form)
+                renderedEquipment.append(equipment)
                 // Only the native image availability is controlled. The actual
                 // bundled page, readiness projection, PNG decode and storage run.
                 if rendered.count <= 2 { return nil }
                 return CompanionPresenceArt.png(form: form, family: family, treatment: treatment,
-                    recipe: recipe, naturalVariation: natural)
+                    recipe: recipe, naturalVariation: natural, equipment: equipment)
             })
         host.updateAppearance(form: .light, family: nil, reduceMotion: true)
-        host.updateAppearance(form: .companion, family: nil, reduceMotion: true)
+        host.updateAppearance(form: .companion, family: nil, reduceMotion: true, equipment: equipped)
+        let equippedID = CompanionVisualAsset.appearanceID(form: .companion, family: nil,
+            treatment: .original, equipment: equipped)
         XCTAssertEqual(rendered, [.light, .companion])
         XCTAssertFalse(host.appearanceDeliveryDiagnostics.contains { $0.hasPrefix("scheduled") })
         host.start()
@@ -135,15 +186,17 @@ final class HostedPlayLayoutTests: XCTestCase {
                     return {id: state.companion.nativeAppearance?.id, ready: state.companion.nativeAppearance?.ready,
                             revision: state.journey.revision, eventCount: state.journey.ledger.eventCount};
                     """, arguments: [:], in: nil, contentWorld: .page) as? [String: Any] ?? [:]
-                if last["id"] as? String == "Companion:origin", last["ready"] as? Bool == true,
+                if last["id"] as? String == equippedID, last["ready"] as? Bool == true,
                    host.appearanceDeliveryDiagnostics.contains(where: { $0.hasPrefix("ack=true") }) { break }
                 try await Task.sleep(for: .milliseconds(30))
             }
-            XCTAssertEqual(last["id"] as? String, "Companion:origin",
+            XCTAssertEqual(last["id"] as? String, equippedID,
                 "Latest startup appearance did not recover: \(last); \(host.appearanceDeliveryDiagnostics)")
             XCTAssertEqual(last["ready"] as? Bool, true)
             XCTAssertEqual(rendered, [.light, .companion, .companion],
                 "Ready retries only the latest failed inputs once; an older request cannot revive")
+            XCTAssertEqual(renderedEquipment, [.empty, equipped, equipped],
+                "The one readiness retry must retain the latest equipment with the body")
             XCTAssertEqual(last["revision"] as? String, revision)
             XCTAssertEqual(last["eventCount"] as? Int, events)
             XCTAssertEqual(host.sessionID, session)

@@ -1,6 +1,10 @@
 # Third-party dependency notices
 
-Dependencies are resolved by the pinned lockfile; their licenses are not replaced by the project MIT license. Installed packages contain their complete notices. No installed package trees or model weights are distributed in this source release.
+Npm dependencies are resolved by the pinned lockfile; their licenses are not replaced by the project MIT license. Installed npm packages contain their complete notices and are not vendored here. No model weights are distributed in this source release.
+
+The Unity project includes the optional **Coplay MCP for Unity 10.0.0** Editor package in `unity/ARCHi/Packages/com.coplaydev.unity-mcp`, under its unchanged [MIT license and copyright notice](unity/ARCHi/Packages/com.coplaydev.unity-mcp/LICENSE.md). Its [package manifest](unity/ARCHi/Packages/com.coplaydev.unity-mcp/package.json) and the project's [package lock](unity/ARCHi/Packages/packages-lock.json) describe the selected dependencies. This tool is not the native assistant or a runtime memory owner.
+
+Unity 6000.5.4f1 and its declared engine/editor modules are external prerequisites governed by their own terms. The project manifests also resolve Unity Test Framework and Newtonsoft JSON dependencies; their full package notices are available in the resolved packages. The Unity installation and PackageCache are excluded from this source distribution. No project MIT statement relicenses those external tools or packages.
 
 | Package | Version | Declared license |
 | --- | --- | --- |

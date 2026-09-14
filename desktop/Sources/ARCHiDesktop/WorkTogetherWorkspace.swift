@@ -8,6 +8,7 @@ struct WorkTogetherWorkspace: View {
     @State private var showsConnections = false
     @State private var showsPlacement = false
     @State private var showsSettings = false
+    @State private var showsInterest = false
     @FocusState private var composerFocused: Bool
 
     var body: some View {
@@ -32,10 +33,13 @@ struct WorkTogetherWorkspace: View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
                 Text("Work together").font(.system(size: 23, weight: .medium, design: .rounded))
-                Text("Your draft. A little help. Every change yours.")
+                Text("Point at something. Bring its context into your work.")
                     .font(.system(size: 11)).foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
+            Button("Look here", systemImage: "scope") { showsInterest.toggle() }
+                .buttonStyle(.borderless).accessibilityIdentifier("work.interest")
+                .popover(isPresented: $showsInterest) { DesktopInterestCard(store: store).frame(width: 350).padding(12) }
             Button("Place ARCHi", systemImage: "viewfinder") { showsPlacement.toggle() }
                 .buttonStyle(.borderless)
                 .accessibilityIdentifier("work.placement")
@@ -76,6 +80,9 @@ struct WorkTogetherWorkspace: View {
     private var documentPane: some View {
         VStack(spacing: 0) {
             documentToolbar
+            if store.desktopInterestSource != nil {
+                DesktopInterestSharingNotice(store: store).padding(10)
+            }
             Divider()
             SharedDocumentView(store: store)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -96,7 +103,8 @@ struct WorkTogetherWorkspace: View {
                 Text(store.sourceName ?? "Your working copy")
                     .font(.system(size: 12, weight: .medium)).lineLimit(1)
                     .help(store.sourceName ?? "Choose a UTF-8 text document")
-                Text(store.hasUnexportedWorkingCopy ? "Session edits · Export to keep" : "Original file unchanged")
+                Text(store.hasUnexportedWorkingCopy ? "Session edits · Export to keep"
+                     : store.desktopInterestSource != nil ? "Captured copy · original window unchanged" : "Original file unchanged")
                     .font(.system(size: 10)).foregroundStyle(.secondary)
                     .accessibilityIdentifier("work.persistence-status")
             }
@@ -128,14 +136,16 @@ struct WorkTogetherWorkspace: View {
         VStack(spacing: 12) {
             Image(systemName: "doc.text.viewfinder")
                 .font(.system(size: 38, weight: .ultraLight)).foregroundStyle(ArchiPalette.violet)
-            Text("Bring a draft into view.")
+            Text("Bring something into focus.")
                 .font(.system(size: 19, weight: .medium, design: .rounded))
-            Text("Choose a text document, then select a passage to work on with ARCHi.")
+            Text("Point ARCHi at a window to read a local snapshot, or choose a text document. Then select a passage to work on together.")
                 .font(.system(size: 12)).foregroundStyle(.secondary)
                 .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
             Button("Choose document…", systemImage: "plus") { store.chooseDocument() }
                 .buttonStyle(.borderedProminent)
                 .accessibilityIdentifier("work.choose-document")
+            Button("Point at a window", systemImage: "scope") { store.beginDesktopInterest() }
+                .buttonStyle(.bordered).accessibilityIdentifier("work.point-window")
             Text("UTF-8 text · up to 100 KB").font(.system(size: 10)).foregroundStyle(.secondary)
         }
         .padding(28).frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -167,16 +177,142 @@ struct WorkTogetherWorkspace: View {
             .buttonStyle(.bordered).controlSize(.small)
             .disabled(store.textSelection == nil || store.isWorking)
             .help("Prepare an instruction for this exact passage. Send starts the request.")
+            if store.activeQiMon != nil {
+                HStack(spacing: 8) {
+                    Button("Focus light", systemImage: "sparkle.magnifyingglass") {
+                        store.previewPlacement()
+                        showsPlacement = store.spatialPreview != nil
+                    }
+                    .buttonStyle(.bordered).controlSize(.small)
+                    .disabled(store.textSelection == nil || store.isWorking || !store.isVisible || store.preferences.quiet)
+                    .accessibilityIdentifier("work.kin-focus-light")
+                    .help("KIN focuses on the selected passage and previews a nearby position. Nothing is sent; KIN stays in place.")
+                    if store.hasFreshKinFocus {
+                        Button("Stop focus") { store.dismissPlacementPreview() }
+                            .buttonStyle(.borderless).font(.system(size: 11))
+                            .accessibilityIdentifier("work.kin-stop-focus")
+                    }
+                    Spacer(minLength: 0)
+                }
+            }
+            if store.preferences.equipment.hand == .focusStaff {
+                HStack(spacing: 6) {
+                    Button("Point with staff") {
+                        if store.activateEquippedItem() { showsPlacement = true }
+                    }
+                    .buttonStyle(.bordered).controlSize(.small)
+                    .disabled(store.textSelection == nil || store.isWorking || !store.isVisible)
+                    .accessibilityIdentifier("work.focus-staff")
+                    .help("Use your kept gesture to highlight this passage and preview a nearby position. Nothing is sent; ARCHi stays in place.")
+                    Button("Point and explain") { _ = store.pointAndExplainSelection() }
+                        .buttonStyle(.bordered).controlSize(.small)
+                        .disabled(!store.canPointAndExplainSelection)
+                        .accessibilityIdentifier("work.point-and-explain")
+                        .accessibilityHint(pointAndExplainHelp)
+                        .help(pointAndExplainHelp)
+                    Spacer(minLength: 0)
+                    if store.focusGesturePlayback != nil {
+                        Button("Stop") { store.stopFocusGesture() }
+                            .buttonStyle(.borderless).font(.system(size: 11))
+                            .accessibilityLabel("Stop staff action")
+                            .accessibilityIdentifier("focus-gesture.work-stop")
+                            .help("Stop this gesture and any answer started with Point and explain.")
+                    }
+                    Menu {
+                        Button(store.focusGestureDraft == nil ? "Edit gesture…" : "Review gesture…") {
+                            if store.focusGestureDraft == nil { store.beginFocusGestureTeaching() }
+                            store.open(.appearance)
+                        }
+                    } label: { Image(systemName: "ellipsis.circle") }
+                    .menuStyle(.borderlessButton).fixedSize()
+                    .accessibilityLabel("Staff gesture options")
+                    .accessibilityIdentifier("focus-gesture.work-options")
+                }
+            }
+            if store.focusGestureDraft != nil {
+                HStack(spacing: 10) {
+                    Button("Practice gesture") {
+                        if store.practiceFocusGesture() { showsPlacement = true }
+                    }
+                    .buttonStyle(.bordered).controlSize(.small)
+                    .disabled(store.preferences.equipment.hand != .focusStaff || store.textSelection == nil
+                              || store.isWorking || !store.isVisible)
+                    .accessibilityIdentifier("focus-gesture.practice")
+                    .help("Try your unsaved gesture on this selected passage. No assistant request or automatic movement.")
+                    Button("Review gesture") { store.open(.appearance) }
+                        .buttonStyle(.borderless).font(.system(size: 11))
+                        .accessibilityIdentifier("focus-gesture.review")
+                    if store.preferences.equipment.hand != .focusStaff && store.focusGesturePlayback != nil {
+                        Button("Stop") { store.stopFocusGesture() }
+                            .buttonStyle(.borderless).font(.system(size: 11))
+                            .accessibilityLabel("Stop staff gesture")
+                            .accessibilityIdentifier("focus-gesture.work-stop")
+                    }
+                    Spacer(minLength: 0)
+                }
+            }
+            if showsGestureControls {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(gestureStatus)
+                        .lineLimit(store.preferences.equipment.hand == .focusStaff ? 1 : 2)
+                        .help(gestureStatus)
+                        .accessibilityIdentifier("focus-gesture.work-status")
+                    if store.preferences.equipment.hand == .focusStaff {
+                        Text("Point and explain sends now to \(pointAndExplainDestination).")
+                            .lineLimit(1).minimumScaleFactor(0.9)
+                            .help(pointAndExplainHelp)
+                            .accessibilityIdentifier("work.point-and-explain-disclosure")
+                    }
+                }
+                .font(.system(size: 10)).foregroundStyle(.secondary)
+                .frame(height: 26, alignment: .topLeading)
+            }
         }
         .padding(.horizontal, 14)
-        .frame(height: 80)
+        .frame(height: passageActionsHeight)
+    }
+
+    private var showsGestureControls: Bool {
+        store.preferences.equipment.hand == .focusStaff || store.focusGestureDraft != nil
+    }
+
+    /// Optional rows reserve their own space; a changing playback message does
+    /// not resize the shared document or its selection geometry.
+    private var passageActionsHeight: CGFloat {
+        80 + (store.activeQiMon != nil ? 32 : 0)
+            + (store.preferences.equipment.hand == .focusStaff ? 32 : 0)
+            + (store.focusGestureDraft != nil ? 32 : 0) + (showsGestureControls ? 36 : 0)
+    }
+
+    private var gestureStatus: String {
+        if store.focusGestureDraft != nil && store.preferences.equipment.hand != .focusStaff {
+            return "Equip the Focus Staff in Appearance to practice. Your gesture draft is waiting."
+        }
+        if !store.focusGestureMessage.isEmpty { return store.focusGestureMessage }
+        return store.focusGestureDraft != nil ? "Practice tries your draft. Point with staff uses your kept gesture."
+            : "Point with staff uses your kept gesture. Edit it in the staff options."
+    }
+
+    private var pointAndExplainDestination: String {
+        switch store.route {
+        case .local: "Qwen on this Mac"
+        case .codex: "Codex"
+        case .compare: "both assistants"
+        case .automatic: "Qwen on this Mac"
+        }
+    }
+
+    private var pointAndExplainHelp: String {
+        "Send an explanation request to \(pointAndExplainDestination) now and point with your kept gesture. "
+            + "Your message adds instructions and stays in the composer. "
+            + store.route.disclosure
     }
 
     private var reviewRail: some View {
         VStack(spacing: 0) {
             HStack(spacing: 9) {
-                CompanionPresenceArt(form: store.preferences.form, family: store.evolution.activeFamily,
-                    size: 34, reduceMotion: store.preferences.reduceMotion, treatment: store.preferences.visualTreatment, recipe: store.evolution.activeAppearanceRecipe, naturalVariation: store.evolution.naturalVariation)
+                CompanionPresenceArt(form: store.presentationForm, family: store.presentationFamily,
+                    size: 34, reduceMotion: store.preferences.reduceMotion || store.preferences.quiet, treatment: store.preferences.visualTreatment, recipe: store.presentationRecipe, naturalVariation: store.presentationNaturalVariation, equipment: store.preferences.equipment, lightExpression: store.kinLightExpression)
                 Text("ARCHi").font(.system(size: 15, weight: .medium, design: .rounded))
                 Spacer(minLength: 0)
                 AssistantTaskCue(activity: store.assistantActivity, quiet: store.preferences.quiet,
@@ -186,6 +322,7 @@ struct WorkTogetherWorkspace: View {
             Divider()
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
+                    VoiceTranscriptPreview(voice: store.voiceInput)
                     if let selection = store.textSelection,
                        !store.compareResults.values.contains(where: { $0.state == .complete && $0.revision != nil }) {
                         VStack(alignment: .leading, spacing: 5) {
@@ -200,7 +337,7 @@ struct WorkTogetherWorkspace: View {
                     if store.compareResults.isEmpty {
                         reviewIntroduction
                     } else {
-                        ForEach(store.route.providers) { provider in
+                        ForEach(store.resultProviders) { provider in
                             if let result = store.compareResults[provider] {
                                 WorkTogetherReplyLane(store: store, provider: provider, result: result)
                             }
@@ -244,19 +381,17 @@ struct WorkTogetherWorkspace: View {
                 Button { showsSettings.toggle() } label: { Image(systemName: "slider.horizontal.3") }
                     .buttonStyle(.borderless)
                     .accessibilityLabel("Next reply settings")
+                    .accessibilityIdentifier("work.settings")
                     .popover(isPresented: $showsSettings) {
-                        NextReplySettingsView(store: store).padding(20).frame(width: 330)
+                        AssistantComposerSettingsView(store: store)
                     }
             }
             HStack(spacing: 5) {
-                Picker("Send to", selection: Binding(get: { store.route }, set: { store.setAssistantRoute($0) })) {
-                    Text("Local Qwen").tag(AssistantRoute.local)
-                    Text("Codex").tag(AssistantRoute.codex)
-                    Text("Compare both").tag(AssistantRoute.compare)
+                AssistantRoutePicker(store: store, compact: true)
+                if !store.isWorking, store.route != .automatic,
+                   let provider = store.route.providers.first(where: { store.connection(for: $0) != .ready }) {
+                    ProviderConnectionControls(store: store, provider: provider).controlSize(.small)
                 }
-                .pickerStyle(.menu).controlSize(.small).labelsHidden()
-                .accessibilityLabel("Answer route").accessibilityIdentifier("assistant.route")
-                .disabled(store.isShuttingDown)
                 Spacer(minLength: 0)
                 Button("Lessons · \(store.nextReplyLessons.count)") { showsSettings = true }
                     .buttonStyle(.borderless).font(.system(size: 10))
@@ -272,8 +407,9 @@ struct WorkTogetherWorkspace: View {
                 .padding(10).frame(height: 64, alignment: .topLeading)
                 .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 9))
                 .overlay(RoundedRectangle(cornerRadius: 9).stroke(.primary.opacity(0.12), lineWidth: 1))
+            VoiceInputControls(store: store, surface: .work)
             HStack(alignment: .center, spacing: 8) {
-                Text(sendDisclosure).font(.system(size: 10)).foregroundStyle(.secondary)
+                Text(AssistantComposerState(store: store).sendDisclosure).font(.system(size: 10)).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("work.send-disclosure")
                 Spacer(minLength: 0)
@@ -285,7 +421,7 @@ struct WorkTogetherWorkspace: View {
                     Button("Send", systemImage: "arrow.up") { store.submit() }
                         .buttonStyle(.borderedProminent)
                         .keyboardShortcut(.return, modifiers: .command)
-                        .disabled(!canSend)
+                        .disabled(!AssistantComposerState(store: store).canSend)
                         .accessibilityIdentifier("work.send")
                 }
             }
@@ -293,25 +429,9 @@ struct WorkTogetherWorkspace: View {
             .frame(height: 42, alignment: .center)
         }
         .padding(14)
-        .frame(height: 224, alignment: .top)
+        .frame(height: 248, alignment: .top)
     }
 
-    private var canSend: Bool {
-        store.connectionState == .ready && !store.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && (!store.requestsRevision || store.textSelection != nil)
-    }
-
-    private var sendDisclosure: String {
-        if store.requestsRevision && store.textSelection == nil { return "Select the passage to revise." }
-        if store.connectionState != .ready && !store.isWorking {
-            return store.route == .compare ? "Connect both assistants to send." : "Connect \(store.assistantProvider.name) to send."
-        }
-        switch store.route {
-        case .local: return "Message and full copy stay on this Mac."
-        case .codex: return "Message and full copy go to Codex."
-        case .compare: return "Message and full copy go to both. Lessons stay local."
-        }
-    }
 }
 
 /// Shared with the Assistant page so revising is never a hidden request mode.
@@ -383,7 +503,7 @@ private struct WorkTogetherReplyLane: View {
             }
             if let receipt = result.receipt {
                 DisclosureGroup("Request details") {
-                    AssistantReceiptDetails(receipt: receipt).padding(.top, 6)
+                    AssistantReceiptDetails(receipt: receipt, onOpenGraph: { store.open(.nodeLab) }).padding(.top, 6)
                     if provider == .qwen { HamptonReplyReferences(snapshot: store.hamptonSnapshot) }
                 }
                 .font(.system(size: 10)).foregroundStyle(.secondary)

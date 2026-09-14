@@ -8,24 +8,12 @@ struct AssistantRouteSelector: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text("Answer with").font(.system(size: compact ? 11 : 12, weight: .medium))
-                Picker("Answer with", selection: Binding(get: { store.route }, set: { store.setAssistantRoute($0) })) {
-                    Text("Local Qwen").tag(AssistantRoute.local)
-                    Text("Codex").tag(AssistantRoute.codex)
-                    Text("Compare both").tag(AssistantRoute.compare)
-                }
-                .pickerStyle(.menu)
-                .labelsHidden()
-                .accessibilityLabel("Answer route")
-                .accessibilityIdentifier("assistant.route")
-                .disabled(store.isShuttingDown)
-                Spacer(minLength: 0)
-            }
+            AssistantRoutePicker(store: store, compact: compact, showsTitle: true)
             Text(disclosure)
                 .font(.system(size: compact ? 10 : 11))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+            AssistantConversationControls(store: store)
         }
     }
 
@@ -36,11 +24,78 @@ struct AssistantRouteSelector: View {
                 ? "Send runs on this Mac with optional local session excerpts."
                 : "Send runs on this Mac."
         case .codex:
-            "Send shares this request through ChatGPT. Kept lessons and local session excerpts stay on this Mac."
+            store.route.disclosure
         case .compare:
             store.sessionContextEnabled || !store.nextReplyLessons.isEmpty
-                ? "Send shares the current request with both. Only Qwen receives matching kept lessons and enabled session excerpts, so additional context differs."
-                : "Send shares the same current request with Qwen on this Mac and Codex through ChatGPT."
+                ? "Send shares your message, full shared copy and reply settings with local Qwen and external Codex for comparison. Only Qwen receives kept lessons, enabled session excerpts and recent Qwen conversation."
+                : store.route.disclosure
+        case .automatic:
+            store.route.disclosure
+        }
+    }
+}
+
+/// The same route action is available in both native workspaces.
+@MainActor
+struct AssistantRoutePicker: View {
+    @ObservedObject var store: CompanionStore
+    var compact = false
+    var showsTitle = false
+
+    var body: some View {
+        HStack(spacing: 6) {
+            if showsTitle {
+                Text("Answer with").font(.system(size: compact ? 11 : 12, weight: .medium))
+            }
+            Picker("Answer with", selection: Binding(get: { store.route }, set: { store.setAssistantRoute($0) })) {
+                Text(AssistantRoute.local.title).tag(AssistantRoute.local)
+                Text(AssistantRoute.automatic.title).tag(AssistantRoute.automatic)
+                Text(AssistantRoute.codex.title).tag(AssistantRoute.codex)
+                Text(AssistantRoute.compare.title).tag(AssistantRoute.compare)
+            }
+            .pickerStyle(.menu).controlSize(compact ? .small : .regular)
+            .labelsHidden()
+            .accessibilityLabel("Answer route")
+            .accessibilityIdentifier("assistant.route")
+            .disabled(store.isShuttingDown)
+            if showsTitle { Spacer(minLength: 0) }
+        }
+    }
+}
+
+/// Inspecting or clearing conversation uses the existing request owner's state.
+@MainActor
+struct AssistantComposerSettingsView: View {
+    @ObservedObject var store: CompanionStore
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                NextReplySettingsView(store: store)
+                Divider()
+                Text(store.route.disclosure).font(.system(size: 11)).foregroundStyle(.secondary)
+                AssistantConversationControls(store: store)
+            }
+            .padding(20)
+        }
+        .frame(width: 330, height: 400)
+    }
+}
+
+/// Recovery belongs beside the composer, including after Stop or a failed reply.
+@MainActor
+struct AssistantComposerConnections: View {
+    @ObservedObject var store: CompanionStore
+    var body: some View {
+        if !store.isWorking && store.route != .automatic {
+            ForEach(store.route.providers.filter { store.connection(for: $0) != .ready }) { provider in
+                HStack(alignment: .center, spacing: 8) {
+                    ProviderConnectionControls(store: store, provider: provider)
+                    Text(store.message(for: provider))
+                        .font(.system(size: 10)).foregroundStyle(.secondary)
+                        .lineLimit(2).help(store.message(for: provider))
+                }
+            }
         }
     }
 }
@@ -103,8 +158,10 @@ struct AssistantProviderPanel: View {
             if provider == .qwen {
                 localModels.padding(.top, 12)
             } else {
-                Text("Uses your existing Codex login. The resolved model name is not reported by this adapter. Connecting does not send your draft or shared copy.")
+                Text("Optional external reference or alternative using your Codex login. Choose the route and Send to share the current request. The resolved model name is not reported by this adapter. Connecting does not send your draft or shared copy.")
                     .font(.system(size: 11)).foregroundStyle(.secondary).lineSpacing(3).padding(.top, 10)
+                Text("Review your provider account’s data and licensing terms before sharing sensitive or proprietary material. ARCHi makes no copyright or exclusive ownership guarantee.")
+                    .font(.system(size: 11)).foregroundStyle(.secondary).lineSpacing(3).padding(.top, 6)
             }
         }
     }
@@ -183,7 +240,7 @@ private struct ComparisonReplyLane: View {
                 }
                 EvolutionReplyFeedback(store: store, provider: provider)
                 LessonReplyControls(store: store, provider: provider)
-                if let receipt = lane.receipt { AssistantReceiptDetails(receipt: receipt) }
+                if let receipt = lane.receipt { AssistantReceiptDetails(receipt: receipt, onOpenGraph: { store.open(.nodeLab) }) }
             } else {
                 Text(store.connection(for: provider) == .ready
                      ? "Ready for your next question."
@@ -209,7 +266,8 @@ struct HamptonReplyReferences: View {
                     Text(proposal.uncertainty).font(.system(size: 11)).foregroundStyle(.secondary)
                 }
                 let labels = proposal.sourceIDs.map { id in
-                    id == "selected-passage" ? "selected passage" : id == "shared-copy" ? "shared copy" : "your message"
+                    id.hasPrefix("conversation-") ? "earlier Qwen conversation"
+                        : id == "selected-passage" ? "selected passage" : id == "shared-copy" ? "shared copy" : "your message"
                 }
                 if !labels.isEmpty || !proposal.memoryIDs.isEmpty {
                     let lessons = proposal.memoryIDs.filter { $0.hasPrefix("kept-") }.count

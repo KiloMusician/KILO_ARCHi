@@ -224,7 +224,8 @@ final class AssistantStoreTests: XCTestCase {
         client.resolveReply(0, result: .failure(AssistantFailure.timedOut))
         try await waitUntil("An active failure should be reported") { store.connectionState == .failed }
         XCTAssertFalse(store.isWorking)
-        XCTAssertEqual(store.reply, "This reply did not finish.")
+        XCTAssertEqual(store.reply, AssistantFailure.timedOut.localizedDescription,
+                       "The answer area must expose the actionable failure instead of hiding it in Connections.")
         XCTAssertEqual(store.connectionMessage, AssistantFailure.timedOut.localizedDescription)
         XCTAssertEqual(store.status, store.connectionMessage)
     }

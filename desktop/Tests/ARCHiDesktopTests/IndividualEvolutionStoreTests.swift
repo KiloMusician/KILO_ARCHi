@@ -112,7 +112,7 @@ final class IndividualEvolutionStoreTests: XCTestCase {
     }
 
     @MainActor
-    func testV4SaveKeepsChosenBodyAfterAllAssistanceAndFutureFormPreferencesAreRemoved() throws {
+    func testCurrentSaveKeepsChosenBodyAfterAllAssistanceAndFutureFormPreferencesAreRemoved() throws {
         let url = temporarySave()
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
         let store = EvolutionStore(origin: .light, saveURL: url)
@@ -125,7 +125,7 @@ final class IndividualEvolutionStoreTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
         XCTAssertTrue(store.save())
         let saved = try Data(contentsOf: url), object = try jsonObject(saved)
-        XCTAssertEqual(object["schema"] as? String, "archi-companion-evolution/v4")
+        XCTAssertEqual(object["schema"] as? String, EvolutionStore.schema)
         XCTAssertTrue(object["keptAppearanceRecipe"] is NSNull)
         let reopened = EvolutionStore(saveURL: url)
         XCTAssertNil(reopened.activeFamily)

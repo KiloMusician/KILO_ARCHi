@@ -30,23 +30,41 @@ struct HostedPlayProjection: Equatable, Decodable, Sendable {
             "version", "host", "sessionId", "sequence", "kind", "readiness", "storage", "mode", "journeyId", "revision", "eventCount", "visible"
         ]
         let version = object["version"] as? Int
-        guard Set(object.keys) == (version == 2 ? baseKeys.union(["originDigest", "practices", "arena"]) : baseKeys),
+        guard Set(object.keys) == ([2, 3, 4].contains(version ?? 0) ? baseKeys.union(["originDigest", "practices", "arena"]) : baseKeys),
               JSONSerialization.isValidJSONObject(object) else { throw HostedPlayError.invalidProjection }
-        if version == 2 {
+        if [2, 3, 4].contains(version ?? 0) {
             guard let practices = object["practices"] as? [[String: Any]], practices.count <= 8,
                   practices.allSatisfy({ Set($0.keys) == ["originDigest", "eventId", "battleId", "rulesVersion", "rounds", "outcome", "replayDigest", "committedAt"] }) else {
                 throw HostedPlayError.invalidProjection
             }
             if let arena = object["arena"] as? [String: Any] {
-                guard Set(arena.keys) == ["battleId", "revision", "phase", "round", "summary", "actions"],
+                var arenaKeys: Set<String> = ["battleId", "revision", "phase", "round", "summary", "actions"]
+                if [3, 4].contains(version ?? 0) { arenaKeys.insert("whatIf") }
+                if version == 4 { arenaKeys.insert("readback") }
+                guard Set(arena.keys) == arenaKeys,
                       let actions = arena["actions"] as? [[String: Any]], actions.count <= 32,
                       actions.allSatisfy({ Set($0.keys) == ["id", "label", "detail"] }) else { throw HostedPlayError.invalidProjection }
+                if [3, 4].contains(version ?? 0), !(arena["whatIf"] is NSNull) {
+                    guard let whatIf = arena["whatIf"] as? [String: Any],
+                          Set(whatIf.keys) == ["choices", "firstId", "secondId", "cases"],
+                          let choices = whatIf["choices"] as? [[String: Any]], (2...7).contains(choices.count),
+                          choices.allSatisfy({ Set($0.keys) == ["id", "label", "detail"] }),
+                          let cases = whatIf["cases"] as? [[String: Any]], (1...7).contains(cases.count),
+                          cases.allSatisfy({ Set($0.keys) == ["opponentId", "opponentLabel", "first", "second"] }) else {
+                        throw HostedPlayError.invalidProjection
+                    }
+                }
+                if version == 4, !(arena["readback"] is NSNull) {
+                    guard let readback = arena["readback"], HostedArenaReadback.hasExactKeys(readback) else {
+                        throw HostedPlayError.invalidProjection
+                    }
+                }
             }
         }
         let bytes = try JSONSerialization.data(withJSONObject: object)
-        guard bytes.count <= (version == 2 ? 32_768 : 4096) else { throw HostedPlayError.invalidProjection }
+        guard bytes.count <= ([2, 3, 4].contains(version ?? 0) ? 32_768 : 4096) else { throw HostedPlayError.invalidProjection }
         let value = try JSONDecoder().decode(Self.self, from: bytes)
-        guard [1, 2].contains(value.version), value.host == "archi-desktop", value.kind == "journey-projection",
+        guard [1, 2, 3, 4].contains(value.version), value.host == "archi-desktop", value.kind == "journey-projection",
               UUID(uuidString: value.sessionId) == sessionID,
               value.sequence > sequence, value.sequence <= 9_007_199_254_740_991,
               value.eventCount == nil || (0...9_007_199_254_740_991).contains(value.eventCount!),
@@ -60,7 +78,7 @@ struct HostedPlayProjection: Equatable, Decodable, Sendable {
         } else {
             guard value.storage != .unknown, value.journeyId != nil, value.revision != nil, value.eventCount != nil else { throw HostedPlayError.invalidProjection }
         }
-        if value.version == 2 {
+        if [2, 3, 4].contains(value.version) {
             if value.readiness == .loading {
                 guard value.originDigest == nil, value.practices?.isEmpty == true, value.arena == nil else { throw HostedPlayError.invalidProjection }
             } else {
@@ -70,6 +88,11 @@ struct HostedPlayProjection: Equatable, Decodable, Sendable {
                       Set(practices.map(\.id)).count == practices.count,
                       value.arena == nil || value.arena!.isValid,
                       value.arena == nil || [.habitat, .battle].contains(value.mode) else { throw HostedPlayError.invalidProjection }
+                if value.version == 4, let arena = value.arena {
+                    guard arena.phase == .entry ? arena.readback == nil : arena.readback != nil else {
+                        throw HostedPlayError.invalidProjection
+                    }
+                }
             }
         }
         // Only transport sequence is monotonic. An explicit web-owned import or
@@ -84,6 +107,33 @@ struct HostedArenaProjection: Equatable, Decodable, Sendable {
         let id: String
         let label: String
         let detail: String
+        var isValid: Bool {
+            !id.isEmpty && id.utf8.count <= 160 && !label.isEmpty && label.utf8.count <= 120 && detail.utf8.count <= 300
+        }
+    }
+    struct WhatIf: Equatable, Decodable, Sendable {
+        struct Case: Equatable, Decodable, Sendable, Identifiable {
+            let opponentId: String
+            let opponentLabel: String
+            let first: String
+            let second: String
+            var id: String { opponentId }
+            var isValid: Bool {
+                !opponentId.isEmpty && opponentId.utf8.count <= 160 && !opponentLabel.isEmpty && opponentLabel.utf8.count <= 120
+                    && !first.isEmpty && first.utf8.count <= 700 && !second.isEmpty && second.utf8.count <= 700
+            }
+        }
+        let choices: [Action]
+        let firstId: String
+        let secondId: String
+        let cases: [Case]
+        var isValid: Bool {
+            (2...7).contains(choices.count) && choices.allSatisfy(\.isValid)
+                && Set(choices.map(\.id)).count == choices.count && firstId != secondId
+                && choices.contains(where: { $0.id == firstId }) && choices.contains(where: { $0.id == secondId })
+                && (1...7).contains(cases.count) && cases.allSatisfy(\.isValid)
+                && Set(cases.map(\.opponentId)).count == cases.count
+        }
     }
     let battleId: UUID?
     let revision: String
@@ -91,13 +141,22 @@ struct HostedArenaProjection: Equatable, Decodable, Sendable {
     let round: Int
     let summary: String
     let actions: [Action]
+    let whatIf: WhatIf?
+    let readback: HostedArenaReadback?
+
+    init(battleId: UUID?, revision: String, phase: Phase, round: Int, summary: String, actions: [Action], whatIf: WhatIf? = nil, readback: HostedArenaReadback? = nil) {
+        self.battleId = battleId; self.revision = revision; self.phase = phase; self.round = round
+        self.summary = summary; self.actions = actions; self.whatIf = whatIf
+        self.readback = readback
+    }
 
     var isValid: Bool {
         Self.isDigest(revision) && (0...20).contains(round) && !summary.isEmpty && summary.utf8.count <= 500
             && (phase == .entry ? battleId == nil && round == 0 : battleId != nil && round > 0)
             && actions.count <= 32 && Set(actions.map(\.id)).count == actions.count
-            && actions.allSatisfy { !$0.id.isEmpty && $0.id.utf8.count <= 160 && !$0.label.isEmpty
-                && $0.label.utf8.count <= 120 && $0.detail.utf8.count <= 300 }
+            && actions.allSatisfy(\.isValid)
+            && (whatIf == nil || (phase == .planning && whatIf!.isValid))
+            && (readback == nil || readback!.isValid(for: phase, round: round))
     }
     static func isDigest(_ value: String) -> Bool {
         value.utf8.count == 64 && value.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) }

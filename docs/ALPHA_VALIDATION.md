@@ -1,4 +1,39 @@
-# Alpha source validation
+# Source update validation
+
+## Prepared update · 14 September 2026
+
+The current public working copy is prepared on `codex/desktop-grounded-context`, with package/build version `0.7.0`. It contains later native desktop, evidence/Node Lab, KIN, retained TypeScript and Unity companion/play source. The existing `v0.7.0-alpha.1` tag is unchanged.
+
+The prepared update includes the object-of-interest flow: Seed pointing and mint window outline, explicit local Accessibility/single-window OCR text Read, Review, then Use in the existing Work together copy. Hover performs no inference. Source-bound cancellation/deadlines and a separate exact-copy allowance for Codex/Compare preserve the existing request boundaries. Images are not saved or sent, the external app is not edited, and this flow adds no camera or image-semantics capability. Four new native test files cover capture contracts, read-session lifecycle, Store integration and presentation.
+
+A separate local service qualification on 14 September compiled the actual capture service with Swift 6.3.3 and read only an isolated synthetic window in another process. Accessibility recovered the exact **154-byte** body. Single-window OCR recovered **202 bytes**, including the synthetic window title and paragraph separators, with the expected marker and facts; it was not byte-identical body transcription. Both used already granted permissions, made no model call or permission request, and saved no screenshot. The capture source digest was `e565672d1526e66594c34e25b153aec6978dcf43f0d2da1cb18527ab81cb7af8`. This qualifies those controlled service paths, not arbitrary third-party apps, every display arrangement, permission-denied UI or OCR accuracy on user content.
+
+Preparation uses an explicit source allowlist. It excludes private research, conversations, profile records, editable art originals, installed tools/models and generated caches. Eight native/Unity PNG copies have only their Blender `File` text chunks removed; compressed image payloads, decompressed scanlines and every other chunk are unchanged. Runtime pins and public provenance match the exported assets. Public commands, MIT/license metadata and curated guides are retained separately from development-only commands.
+
+**Public retained-source verification passed on 14 September:** `npm ci` and `npm run check` completed successfully in this clean publication checkout. The aggregate included **260 app/battle tests, 11 boundary/episode tests, 10 PWA contract tests and 23 synthetic ARC tests**, plus both TypeScript checks and the Vite/PWA production asset build. No tests were skipped in these selections. These are retained-source contracts and synthetic fixtures, not browser playtesting or ARC benchmark performance.
+
+The npm installation reported two optional fsevents install scripts awaiting the environment's allow-scripts review. No script approvals or settings changes were made; the requested installation and aggregate checks still passed.
+
+The prepared [GitHub Actions workflow template](source-checks.yml.example) checks full tracked-file checksum coverage, npm source contracts on Ubuntu, and native Swift compilation plus selected capture-geometry, graph, selection and revision-domain tests on macOS. It uses verified official action commit pins, read-only contents permission and no cache/artifact upload, live provider, capture or UI test. GitHub rejected the initial push because the publishing credential lacks workflow permission. The source update therefore ships this as a nonexecuting template. It has not run on a GitHub-hosted runner; enabling it requires a maintainer with workflow permission and an updated source manifest.
+
+**Fresh native compilation and the default full Swift suite passed in the public export on 14 September.** XCTest reported **594 cases executed, including 31 skipped, with zero failures**. Swift Testing separately reported **234 tests in 28 suites passed**, with `installedWorkerPublicPreflightReachesNativeOwner` explicitly skipped. These framework reports are not added into one aggregate pass count; skipped provider/windowed prerequisites are not passes.
+
+A separate exported focused selection passed **76 checks: 57 XCTest and 19 Swift Testing, with zero failures or skips**. It includes the production ten-second read-deadline regression and the opted-in native presentation path through Point/Read/Review/Use, the actual full workspace at 880×640, and the accessible external-copy allowance. These are synthetic fixtures and native control checks, not an ordinary-day human or VoiceOver listening session.
+
+The exported native stage build also passed Swift build, plist validation, ad-hoc signing and deep/strict signature verification. It prepared a separate Development Review candidate in the local temporary staging directory without launching or installing it; the installed/open app remained unchanged. This is local candidate packaging, not notarization or another-Mac installation evidence.
+
+The Unity build/runtime was **not rerun against this exported revision**. Earlier development checks and the historical Alpha results below do not substitute for that qualification. The source checksum manifest identifies prepared files; it is not release certification. No commit, push, tag, build, application launch or profile mutation is performed by the promotion script itself. Source checks and any explicit staging run are separate actions. This remains a source Alpha, not Beta or ordinary-use acceptance.
+
+The included verification routes are:
+
+- `npm run check` for retained TypeScript/shared-engine, boundary, PWA and synthetic ARC contracts and asset build.
+- `swift test --package-path desktop` for default native source tests; report opt-in skips separately.
+- `./script/build_and_run.sh --verify --review --stage-only` to prepare a separate locally signed native candidate without installation or launch.
+- Unity's `ARCHiPortBuild.BuildMac` for scene/configuration, pure Relay checks and Mac build, followed separately by the explicit `-archiPortSmoke` standalone runner for programmatic runtime checks.
+
+The current native desktop build leaves Habitat/Arena unbundled. Unity remains disconnected from saved native KIN and assistance. Human pointer/keyboard use, VoiceOver traversal, ordinary-day usefulness, long-session resource budgets, full recovery, native/Unity handoff and another-Mac installation remain separate qualification work. No new live model result or notarized distribution is claimed.
+
+## Historical published Alpha only
 
 7 September 2026 · `v0.7.0-alpha.1` · source package version `0.7.0`.
 

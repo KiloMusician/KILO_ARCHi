@@ -29,7 +29,7 @@ A Hampton Designed companion may have a recognizable creator-authored appearance
 
 Appearance remains separate from authority and memories. A new body must not silently change permissions, replace the individual's history or turn an inferred user preference into a confirmed fact.
 
-The current Alpha gives supported Companion/Pearl and Lumen appearances subtle, repeatable individual variation derived from Journey origin. Larger forms remain explicit choices, with independent history and explicit Evolution Save/Load. These implemented features do not demonstrate automatic learned biological growth, creator authentication or collectible scarcity.
+The source retains supported Companion/Pearl and Lumen individual variation and adds the existing KIN Core Seed/body presentation. Seed and body are one continuing individual; changing a visible form does not authorize a new memory owner. Native development records keep their existing explicit review and retention boundaries. The separate Unity body/equipment preview is disconnected from saved KIN and grants no evolution. These features do not demonstrate learned biological growth, creator authentication or collectible scarcity.
 
 ## Balanced signature abilities
 

@@ -14,12 +14,35 @@ struct CompanionArt: View {
     let size: CGFloat
     let reduceMotion: Bool
     var naturalVariation: CompanionNaturalVariation? = nil
+    var lightExpression: KinLightExpression = .resting
 
     private var effectiveNaturalVariation: CompanionNaturalVariation? {
         form == .companion ? naturalVariation : nil
     }
 
     var body: some View {
+        Group {
+            if form == .particle {
+                ParticleLightArt(size: size, reduceMotion: reduceMotion)
+            } else if form.isOpticalLight {
+                LightFormArt(form: form, size: size, reduceMotion: reduceMotion)
+            } else if form.isKin {
+                KinArt(form: form, size: size, reduceMotion: reduceMotion,
+                    lightExpression: form == .kinSeed || form == .kin ? lightExpression : .resting)
+            } else if [.constellation, .sprout, .ribbonSpirit, .geode].contains(form) {
+                TealCompanionFallback(form: form).frame(width: size, height: size)
+            } else {
+                familiarBody
+            }
+        }
+        .frame(width: size, height: size)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(effectiveNaturalVariation == nil
+            ? "ARCHi, \(form.rawValue) form"
+            : "ARCHi, \(form.rawValue) form, individual variation")
+    }
+
+    private var familiarBody: some View {
         TimelineView(.animation(minimumInterval: 1 / 24, paused: reduceMotion)) { context in
             let phase = context.date.timeIntervalSinceReferenceDate * 1.5
             let float = reduceMotion ? 0 : sin(phase) * size * 0.018
@@ -42,19 +65,22 @@ struct CompanionArt: View {
             }
         }
         .frame(width: size, height: size)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(effectiveNaturalVariation == nil
-            ? "ARCHi, \(form.rawValue) form"
-            : "ARCHi, \(form.rawValue) form, individual variation")
     }
 
     @ViewBuilder private var formBody: some View {
         switch form {
         case .companion: softCompanion
         case .light: guideLight
+        case .particle: ParticleLightFrame(phase: 0)
+        case .corePearl, .orbitField, .lightForm: LightFormFrame(form: form, phase: 0)
         case .ribbon: ribbon
         case .ink: ink
         case .pixel: pixel
+        case .kin, .kinSpark, .kinSimple, .kinSeed:
+            KinArt(form: form, size: size, reduceMotion: reduceMotion,
+                lightExpression: form == .kinSeed || form == .kin ? lightExpression : .resting)
+        case .constellation, .sprout, .ribbonSpirit, .geode:
+            TealCompanionFallback(form: form)
         }
     }
 
@@ -143,6 +169,93 @@ struct CompanionArt: View {
     private var eye: some View {
         Capsule().fill(ArchiPalette.ink)
             .frame(width: size * 0.037, height: size * 0.077)
+    }
+}
+
+/// Small, deterministic local bodies for a missing or rejected bundled study.
+/// Each preserves its chosen silhouette, inside the same unchanged art frame.
+struct TealCompanionFallback: View {
+    let form: CompanionForm
+
+    var body: some View {
+        Canvas { context, size in
+            let unit = min(size.width, size.height)
+            let teal = Color(red: 0.29, green: 0.69, blue: 0.65)
+            let mint = Color(red: 0.73, green: 0.97, blue: 0.90)
+            func point(_ x: Double, _ y: Double) -> CGPoint { CGPoint(x: x * unit, y: y * unit) }
+            func ellipse(_ x: Double, _ y: Double, _ w: Double, _ h: Double) -> Path {
+                Path(ellipseIn: CGRect(x: x * unit, y: y * unit, width: w * unit, height: h * unit))
+            }
+            func polygon(_ points: [(Double, Double)]) -> Path {
+                Path { path in
+                    guard let first = points.first else { return }
+                    path.move(to: point(first.0, first.1))
+                    for item in points.dropFirst() { path.addLine(to: point(item.0, item.1)) }
+                    path.closeSubpath()
+                }
+            }
+            context.fill(ellipse(0.27, 0.84, 0.46, 0.035), with: .color(teal.opacity(0.10)))
+            switch form {
+            case .constellation:
+                let sphere = ellipse(0.19, 0.18, 0.62, 0.62)
+                context.fill(sphere, with: .radialGradient(Gradient(colors: [mint.opacity(0.30), teal.opacity(0.14)]),
+                    center: point(0.43, 0.42), startRadius: 0, endRadius: unit * 0.4))
+                context.stroke(sphere, with: .color(mint.opacity(0.85)), lineWidth: unit * 0.008)
+                let positions = (0..<20).map { index -> CGPoint in
+                    let angle = Double(index) * 2.4
+                    let radius = 0.08 + Double(index % 5) * 0.05
+                    return point(0.5 + cos(angle) * radius, 0.49 + sin(angle) * radius)
+                }
+                for (index, start) in positions.enumerated() {
+                    var link = Path(); link.move(to: start); link.addLine(to: positions[(index + 7) % positions.count])
+                    context.stroke(link, with: .color(mint.opacity(0.33)), lineWidth: max(0.4, unit * 0.0015))
+                    context.fill(Path(ellipseIn: CGRect(x: start.x - unit * 0.004, y: start.y - unit * 0.004,
+                        width: unit * 0.008, height: unit * 0.008)), with: .color(mint))
+                }
+            case .sprout:
+                let leaves = [polygon([(0.44, 0.36), (0.26, 0.14), (0.25, 0.30), (0.39, 0.41)]),
+                    polygon([(0.56, 0.36), (0.74, 0.14), (0.75, 0.30), (0.61, 0.41)])]
+                for leaf in leaves {
+                    context.fill(leaf, with: .color(teal.opacity(0.70)))
+                    context.stroke(leaf, with: .color(mint.opacity(0.8)), lineWidth: unit * 0.007)
+                }
+                for body in [ellipse(0.34, 0.54, 0.32, 0.27), ellipse(0.28, 0.31, 0.44, 0.34),
+                    ellipse(0.26, 0.60, 0.12, 0.13), ellipse(0.62, 0.60, 0.12, 0.13)] {
+                    context.fill(body, with: .color(teal.opacity(0.70)))
+                    context.stroke(body, with: .color(mint.opacity(0.8)), lineWidth: unit * 0.006)
+                }
+                for x in [0.40, 0.56] {
+                    context.fill(ellipse(x, 0.43, 0.035, 0.055), with: .color(Color(red: 0.08, green: 0.26, blue: 0.30)))
+                }
+            case .ribbonSpirit:
+                for index in 0..<3 {
+                    let offset = Double(index - 1) * 0.075
+                    var ribbon = Path()
+                    ribbon.move(to: point(0.67 + offset, 0.20))
+                    ribbon.addCurve(to: point(0.33 + offset, 0.77),
+                        control1: point(0.09 + offset, 0.32), control2: point(0.89 + offset, 0.60))
+                    context.stroke(ribbon, with: .linearGradient(Gradient(colors: [mint.opacity(0.75), teal.opacity(0.42)]),
+                        startPoint: point(0.3, 0.2), endPoint: point(0.7, 0.8)),
+                        style: StrokeStyle(lineWidth: unit * 0.055, lineCap: .round))
+                }
+            case .geode:
+                for index in 0..<7 {
+                    let angle = Double(index) * 2 * Double.pi / 7
+                    let centerX = 0.5 + cos(angle) * 0.23
+                    let centerY = 0.49 + sin(angle) * 0.23
+                    let shard = polygon([(centerX - 0.045, centerY), (centerX, centerY - 0.105),
+                        (centerX + 0.055, centerY - 0.005), (centerX + 0.018, centerY + 0.070)])
+                    context.fill(shard, with: .color(teal.opacity(0.55)))
+                    context.stroke(shard, with: .color(mint.opacity(0.85)), lineWidth: unit * 0.006)
+                }
+            default: break
+            }
+            let coreY = form == .sprout ? 0.67 : 0.49
+            context.fill(ellipse(0.42, coreY - 0.08, 0.16, 0.16),
+                with: .radialGradient(Gradient(colors: [.white, mint.opacity(0.8), teal.opacity(0)]),
+                    center: point(0.5, coreY), startRadius: 0, endRadius: unit * 0.08))
+            context.fill(ellipse(0.481, coreY - 0.019, 0.038, 0.038), with: .color(.white))
+        }
     }
 }
 

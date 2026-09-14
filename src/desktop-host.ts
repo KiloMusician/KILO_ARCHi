@@ -1,6 +1,6 @@
 /** The native host receives a projection only. Journey authority stays in the game. */
 export const DESKTOP_HOST_VERSION = 1;
-export const DESKTOP_PROJECTION_VERSION = 2;
+export const DESKTOP_PROJECTION_VERSION = 4;
 export const DESKTOP_HOST_NAME = "archi-desktop";
 
 export interface DesktopHostBootstrap {
@@ -16,9 +16,33 @@ export interface DesktopPracticeSummary {
   outcome: "won" | "lost" | "draw"; replayDigest: string; committedAt: string;
 }
 export interface DesktopArenaAction { id: string; label: string; detail: string }
+export interface DesktopArenaWhatIf {
+  choices: readonly DesktopArenaAction[];
+  firstId: string; secondId: string;
+  cases: readonly { opponentId: string; opponentLabel: string; first: string; second: string }[];
+}
+export interface DesktopArenaMember {
+  id: string; name: string; role: "hearth" | "muse" | "scout" | "beacon" | "keeper" | "guardian";
+  integrity: number; maximumIntegrity: number; active: boolean; exposed: boolean;
+}
+export interface DesktopArenaTeam {
+  id: "one" | "two"; label: string; spark: number; roster: readonly DesktopArenaMember[];
+}
+export interface DesktopArenaRound { round: number; summary: string }
+export interface DesktopArenaResult {
+  winner: "one" | "two" | "draw"; reason: "eliminated" | "round-limit" | "surrender";
+  retention: "unsaved" | "saving" | "saved" | "session-only" | "unavailable"; message: string;
+}
+/** Public resolved state only. Pending commands and partner policy are never included. */
+export interface DesktopArenaReadback {
+  teams: readonly [DesktopArenaTeam, DesktopArenaTeam]; rounds: readonly DesktopArenaRound[];
+  result: DesktopArenaResult | null;
+}
 export interface DesktopArenaState {
   battleId: string | null; revision: string; phase: "entry" | "planning" | "sealed" | "finished";
   round: number; summary: string; actions: readonly DesktopArenaAction[];
+  whatIf: DesktopArenaWhatIf | null;
+  readback: DesktopArenaReadback | null;
 }
 interface DesktopExperienceState {
   originDigest: string | null; practices: readonly DesktopPracticeSummary[]; arena: DesktopArenaState | null;
@@ -35,7 +59,7 @@ export type DesktopJourneyState = DesktopExperienceState & (
     });
 
 export type DesktopJourneyProjection = DesktopJourneyState & {
-  version: 2;
+  version: 4;
   host: "archi-desktop";
   sessionId: string;
   sequence: number;
@@ -91,6 +115,73 @@ function denseArray(value: unknown): boolean {
       .every((field) => field && Object.hasOwn(field, "value"));
 }
 
+function boundedText(value: unknown, maximum: number, allowEmpty = false): value is string {
+  return typeof value === "string" && (allowEmpty || value.length > 0) && new TextEncoder().encode(value).length <= maximum;
+}
+
+function validArenaAction(value: unknown): value is DesktopArenaAction {
+  return exactRecord(value, ["id", "label", "detail"]) && boundedText(value.id, 160) &&
+    boundedText(value.label, 120) && boundedText(value.detail, 300, true);
+}
+
+function validWhatIf(value: unknown): value is DesktopArenaWhatIf {
+  if (!exactRecord(value, ["choices", "firstId", "secondId", "cases"]) ||
+      !Array.isArray(value.choices) || !denseArray(value.choices) || value.choices.length < 2 || value.choices.length > 7 ||
+      !value.choices.every(validArenaAction) || new Set(value.choices.map((choice) => choice.id)).size !== value.choices.length ||
+      !boundedText(value.firstId, 160) || !boundedText(value.secondId, 160) || value.firstId === value.secondId ||
+      !value.choices.some((choice) => choice.id === value.firstId) || !value.choices.some((choice) => choice.id === value.secondId) ||
+      !Array.isArray(value.cases) || !denseArray(value.cases) || value.cases.length < 1 || value.cases.length > 7 ||
+      !value.cases.every((item) => exactRecord(item, ["opponentId", "opponentLabel", "first", "second"]) &&
+        boundedText(item.opponentId, 160) && boundedText(item.opponentLabel, 120) &&
+        boundedText(item.first, 700) && boundedText(item.second, 700)) ||
+      new Set(value.cases.map((item) => item.opponentId)).size !== value.cases.length) return false;
+  return true;
+}
+
+function boundedInteger(value: unknown, minimum: number, maximum: number): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= minimum && value <= maximum;
+}
+
+function validReadback(value: unknown): value is DesktopArenaReadback {
+  if (!exactRecord(value, ["teams", "rounds", "result"]) || !Array.isArray(value.teams) ||
+      !denseArray(value.teams) || value.teams.length !== 2) return false;
+  const memberIDs = new Set<string>();
+  for (const [index, team] of value.teams.entries()) {
+    if (!exactRecord(team, ["id", "label", "spark", "roster"]) || team.id !== ["one", "two"][index] ||
+        !boundedText(team.label, 120) || !boundedInteger(team.spark, 0, 3) || !Array.isArray(team.roster) ||
+        !denseArray(team.roster) || team.roster.length < 1 || team.roster.length > 3) return false;
+    let maximumIntegrity = 0; let activeCount = 0;
+    for (const member of team.roster) {
+      if (!exactRecord(member, ["id", "name", "role", "integrity", "maximumIntegrity", "active", "exposed"]) ||
+          !boundedText(member.id, 160) || memberIDs.has(member.id) || !boundedText(member.name, 120) ||
+          !["hearth", "muse", "scout", "beacon", "keeper", "guardian"].includes(member.role as string) ||
+          !boundedInteger(member.maximumIntegrity, 1, 36) || !boundedInteger(member.integrity, 0, member.maximumIntegrity) ||
+          typeof member.active !== "boolean" || typeof member.exposed !== "boolean" ||
+          (member.active && member.integrity === 0)) return false;
+      memberIDs.add(member.id); maximumIntegrity += member.maximumIntegrity;
+      if (member.active) activeCount += 1;
+    }
+    if (maximumIntegrity !== 36 || activeCount > 1) return false;
+  }
+  if (!Array.isArray(value.rounds) || !denseArray(value.rounds) || value.rounds.length > 20 ||
+      !value.rounds.every((item, index) => exactRecord(item, ["round", "summary"]) && item.round === index + 1 &&
+        boundedText(item.summary, 500))) return false;
+  const result = value.result;
+  return result === null || (exactRecord(result, ["winner", "reason", "retention", "message"]) &&
+    ["one", "two", "draw"].includes(result.winner as string) &&
+    ["eliminated", "round-limit", "surrender"].includes(result.reason as string) &&
+    ["unsaved", "saving", "saved", "session-only", "unavailable"].includes(result.retention as string) && boundedText(result.message, 300));
+}
+
+function copyArena(arena: DesktopArenaState | null): DesktopArenaState | null {
+  const copyTeam = (team: DesktopArenaTeam): DesktopArenaTeam => ({ ...team, roster: team.roster.map((member) => ({ ...member })) });
+  return arena ? { ...arena, actions: arena.actions.map((item) => ({ ...item })),
+    whatIf: arena.whatIf ? { ...arena.whatIf, choices: arena.whatIf.choices.map((item) => ({ ...item })),
+      cases: arena.whatIf.cases.map((item) => ({ ...item })) } : null,
+    readback: arena.readback ? { teams: [copyTeam(arena.readback.teams[0]), copyTeam(arena.readback.teams[1])],
+      rounds: arena.readback.rounds.map((round) => ({ ...round })), result: arena.readback.result ? { ...arena.readback.result } : null } : null } : null;
+}
+
 /** Query parameters, user agents, or a similarly named global alone never enable embedding. */
 export function readDesktopHostBootstrap(environment: DesktopHostEnvironment): DesktopHostBootstrap | null {
   try {
@@ -125,16 +216,19 @@ function validExperience(state: DesktopExperienceState): boolean {
         typeof item.committedAt !== "string" || !Number.isFinite(Date.parse(item.committedAt)) || new Date(item.committedAt).toISOString() !== item.committedAt) return false;
   }
   const arena = state.arena;
-  if (arena !== null && (!exactRecord(arena, ["battleId", "revision", "phase", "round", "summary", "actions"]) ||
+  if (arena !== null && (!exactRecord(arena, ["battleId", "revision", "phase", "round", "summary", "actions", "whatIf", "readback"]) ||
       (arena.battleId !== null && (typeof arena.battleId !== "string" || !uuidPattern.test(arena.battleId))) ||
       !digest(arena.revision) || !["entry", "planning", "sealed", "finished"].includes(arena.phase) ||
-      !Number.isInteger(arena.round) || arena.round < 0 || arena.round > 20 || typeof arena.summary !== "string" || new TextEncoder().encode(arena.summary).length > 500 ||
+      !Number.isInteger(arena.round) || arena.round < 0 || arena.round > 20 || !boundedText(arena.summary, 500) ||
       !Array.isArray(arena.actions) || arena.actions.length > 32 || !denseArray(arena.actions) || new Set(arena.actions.map((item) => item.id)).size !== arena.actions.length ||
-      !arena.actions.every((item) => exactRecord(item, ["id", "label", "detail"]) &&
-        typeof item.id === "string" && item.id.length > 0 && new TextEncoder().encode(item.id).length <= 160 &&
-        typeof item.label === "string" && item.label.length > 0 && new TextEncoder().encode(item.label).length <= 120 &&
-        typeof item.detail === "string" && new TextEncoder().encode(item.detail).length <= 300))) return false;
+      !arena.actions.every(validArenaAction) || (arena.whatIf !== null && !validWhatIf(arena.whatIf)) ||
+      (arena.readback !== null && !validReadback(arena.readback)))) return false;
   if (arena && (arena.phase === "entry" ? arena.battleId !== null || arena.round !== 0 : arena.battleId === null || arena.round < 1)) return false;
+  if (arena?.whatIf && arena.phase !== "planning") return false;
+  if (arena && (arena.phase === "entry" ? arena.readback !== null : arena.readback === null)) return false;
+  if (arena?.readback && (arena.phase === "finished" ?
+    arena.readback.result === null || arena.readback.rounds.length !== arena.round :
+    arena.readback.result !== null || arena.readback.rounds.length !== arena.round - 1)) return false;
   return true;
 }
 
@@ -146,6 +240,7 @@ function validState(state: DesktopJourneyState): boolean {
   }
   return state.readiness === "ready" && ["local-browser", "session-only", "qa-ephemeral"].includes(state.storage) &&
     state.originDigest !== null &&
+    (state.arena === null || ["habitat", "battle"].includes(state.mode)) &&
     modes.includes(state.mode) && typeof state.journeyId === "string" && /^ARCHI-[A-F0-9]{8}$/.test(state.journeyId) &&
     typeof state.revision === "string" && state.revision.length > 0 && state.revision.length <= 160 &&
     Number.isSafeInteger(state.eventCount) && state.eventCount >= 0;
@@ -230,14 +325,16 @@ export function connectDesktopHost(environment: DesktopHostEnvironment): Desktop
       readiness: state.readiness, storage: state.storage, mode: state.mode,
       journeyId: state.journeyId, revision: state.revision, eventCount: state.eventCount, visible: visible(),
       originDigest: state.originDigest, practices: state.practices.map((item) => ({...item})),
-      arena: state.arena ? {...state.arena, actions: state.arena.actions.map((item) => ({...item}))} : null,
+      arena: copyArena(state.arena),
     };
     const fingerprint = JSON.stringify(selected);
     if (fingerprint === lastSent || projectionSequence === Number.MAX_SAFE_INTEGER) return false;
     const projection = Object.freeze({
       version: DESKTOP_PROJECTION_VERSION, host: DESKTOP_HOST_NAME, sessionId: bootstrap!.sessionId,
-      sequence: ++projectionSequence, kind: "journey-projection", ...selected,
+      sequence: projectionSequence + 1, kind: "journey-projection", ...selected,
     }) as DesktopJourneyProjection;
+    if (new TextEncoder().encode(JSON.stringify(projection)).length > 32_768) return false;
+    projectionSequence += 1;
     try {
       transport.postMessage(projection);
       lastSent = fingerprint;
@@ -295,8 +392,15 @@ export function connectDesktopHost(environment: DesktopHostEnvironment): Desktop
     publish(next): boolean {
       try {
         if (disposed || !validState(next) || (state.readiness === "ready" && next.readiness !== "ready")) return false;
-        state = { ...next, practices: next.practices.map((item) => ({ ...item })),
-          arena: next.arena ? { ...next.arena, actions: next.arena.actions.map((item) => ({ ...item })) } : null };
+        const copied = { ...next, practices: next.practices.map((item) => ({ ...item })), arena: copyArena(next.arena) };
+        // Reject an oversized publication before replacing the last admitted projection.
+        const bounded = { version: DESKTOP_PROJECTION_VERSION, host: DESKTOP_HOST_NAME, sessionId: bootstrap.sessionId,
+          sequence: Number.MAX_SAFE_INTEGER, kind: "journey-projection", visible: false,
+          readiness: copied.readiness, storage: copied.storage, mode: copied.mode, journeyId: copied.journeyId,
+          revision: copied.revision, eventCount: copied.eventCount, originDigest: copied.originDigest,
+          practices: copied.practices, arena: copied.arena };
+        if (new TextEncoder().encode(JSON.stringify(bounded)).length > 32_768) return false;
+        state = copied;
       } catch { return false; }
       return emit();
     },

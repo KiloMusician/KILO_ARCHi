@@ -6,7 +6,7 @@ let package = Package(
     platforms: [.macOS(.v14)],
     products: [.executable(name: "ARCHiDesktop", targets: ["ARCHiDesktop"])],
     targets: [
-        .executableTarget(name: "ARCHiDesktop", resources: [.copy("Resources/CompanionArt"), .copy("Resources/ReactorBridge")]),
+        .executableTarget(name: "ARCHiDesktop", resources: [.copy("Resources/CompanionArt"), .copy("Resources/ReactorBridge"), .copy("Resources/Branding")]),
         .testTarget(name: "ARCHiDesktopTests", dependencies: ["ARCHiDesktop"]),
     ]
 )

@@ -30,6 +30,58 @@ enum CompanionPlacement {
     }
 }
 
+/// Each delivered event retains its pointer position. Reading mouseLocation
+/// instead would sample the current cursor, possibly after queued down/drag/up
+/// events have already occurred. Quartz's unflipped location uses AppKit's
+/// global coordinates and is independent of the window's later movement.
+@MainActor
+enum CompanionPointerLocation {
+    static func screenPoint(for event: NSEvent) -> CGPoint? {
+        if let quartz = event.cgEvent {
+            let point = quartz.unflippedLocation
+            if point.x.isFinite && point.y.isFinite { return point }
+        }
+        let point = event.window?.convertPoint(toScreen: event.locationInWindow) ?? event.locationInWindow
+        return point.x.isFinite && point.y.isFinite ? point : nil
+    }
+}
+
+/// Tracks pointer displacement from the original native frame, never an inferred
+/// rendering position. A release can establish a drag even if intermediate
+/// movement events were coalesced. Once dragged, returning to the origin is not
+/// a click and must not open chat.
+struct CompanionPointerGesture {
+    enum Release: Equatable { case click, moved(CGRect), cancelled }
+    private var origin: CGPoint?
+    private var frame: CGRect?
+    private var dragged = false
+
+    mutating func begin(at point: CGPoint?, frame: CGRect?) {
+        cancel()
+        guard let point, let frame, point.x.isFinite, point.y.isFinite,
+              [frame.minX, frame.minY, frame.width, frame.height].allSatisfy(\.isFinite),
+              !frame.isEmpty, !frame.isNull else { return }
+        origin = point; self.frame = frame
+    }
+
+    mutating func move(to point: CGPoint?) -> CGRect? {
+        guard let point, point.x.isFinite, point.y.isFinite, let origin, let frame else { return nil }
+        let dx = point.x - origin.x, dy = point.y - origin.y
+        guard dx.isFinite, dy.isFinite, dragged || hypot(dx, dy) >= 3 else { return nil }
+        dragged = true
+        return frame.offsetBy(dx: dx, dy: dy)
+    }
+
+    mutating func release(at point: CGPoint?) -> Release {
+        defer { cancel() }
+        guard origin != nil, let point, point.x.isFinite, point.y.isFinite else { return .cancelled }
+        if let moved = move(to: point) { return .moved(moved) }
+        return dragged ? .cancelled : .click
+    }
+
+    mutating func cancel() { origin = nil; frame = nil; dragged = false }
+}
+
 private final class CompanionPanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
@@ -46,6 +98,10 @@ final class CompanionPanelController: NSObject, NSWindowDelegate {
     private var scale: CGFloat = 1
     private var previewWindow: NSPanel?
     private var presentedInHabitat = false
+    private var chatBubble: CompanionChatBubbleController?
+    private let interestOutline = DesktopInterestOutline()
+    private var interestTracking: Task<Void, Never>?
+    var chatWindow: NSPanel? { chatBubble?.window }
 
     init(store: CompanionStore) {
         self.store = store
@@ -70,6 +126,13 @@ final class CompanionPanelController: NSObject, NSWindowDelegate {
 
         interaction = CompanionInteractionView(store: store)
         interaction.move = { [weak self] proposed, pointer in self?.move(to: proposed, pointer: pointer) }
+        interaction.openChat = { [weak self] in self?.showChatBubble() }
+        interaction.finishPoint = { [weak self] in
+            guard let self, self.store.desktopInterest.phase == .aiming else { return }
+            self.refreshInterestTarget()
+            self.store.desktopInterest.finishAim()
+            self.showChatBubble()
+        }
         window.contentView = interaction
         applyPreferences(store.preferences)
         centerOnMainScreen()
@@ -79,16 +142,56 @@ final class CompanionPanelController: NSObject, NSWindowDelegate {
         store.$preferences.dropFirst().sink { [weak self] value in
             self?.applyPreferences(value)
         }.store(in: &subscriptions)
+        store.$keptQiMon.combineLatest(store.$qiMonJourneyOrigin)
+            .receive(on: RunLoop.main).sink { [weak self] _ in
+                guard let self else { return }
+                self.interaction.setAccessibilityValue(self.store.cursorAccessibilityValue)
+            }.store(in: &subscriptions)
         store.evolution.$revision.sink { [weak self] _ in
             guard let self else { return }
-            self.interaction.setAccessibilityValue(self.store.assistantAccessibilityValue)
+            self.interaction.setAccessibilityValue(self.store.cursorAccessibilityValue)
         }.store(in: &subscriptions)
         store.$compareResults.combineLatest(store.$isWorking)
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 guard let self else { return }
-                self.interaction.setAccessibilityValue(self.store.assistantAccessibilityValue)
+                self.interaction.setAccessibilityValue(self.store.cursorAccessibilityValue)
             }.store(in: &subscriptions)
+        store.$focusGesturePlayback.sink { [weak self] playback in
+            guard let self else { return }
+            self.interaction.setAccessibilityValue(
+                self.store.cursorAccessibilityValue(for: self.store.preferences, gesture: playback))
+        }.store(in: &subscriptions)
+        store.$kinLightPreview.combineLatest(store.$spatialPreview, store.$isVisible)
+            .receive(on: RunLoop.main).sink { [weak self] _ in
+                guard let self else { return }
+                self.interaction.setAccessibilityValue(self.store.cursorAccessibilityValue)
+            }.store(in: &subscriptions)
+        store.$isVisible.combineLatest(store.$isShuttingDown).sink { [weak self] visible, shuttingDown in
+            if !visible || shuttingDown {
+                self?.interaction.cancelPointerGesture()
+                self?.dismissChatBubble()
+                self?.store.desktopInterest.cancel()
+            }
+        }.store(in: &subscriptions)
+        store.desktopInterest.$phase.receive(on: RunLoop.main).sink { [weak self] phase in
+            guard let self else { return }
+            self.interaction.setAccessibilityValue(self.store.cursorAccessibilityValue)
+            self.interestTracking?.cancel(); self.interestTracking = nil
+            guard phase == .aiming || phase == .targeted || phase == .reading else {
+                self.interestOutline.show(nil); return
+            }
+            self.interestTracking = Task { [weak self] in
+                while !Task.isCancelled {
+                    guard self != nil else { return }
+                    self?.refreshInterestTarget()
+                    try? await Task.sleep(for: .milliseconds(180))
+                }
+            }
+        }.store(in: &subscriptions)
+        store.$section.removeDuplicates().dropFirst().sink { [weak self] _ in
+            self?.dismissChatBubble()
+        }.store(in: &subscriptions)
         NotificationCenter.default.addObserver(
             self, selector: #selector(displaysChanged),
             name: NSApplication.didChangeScreenParametersNotification, object: nil
@@ -98,6 +201,9 @@ final class CompanionPanelController: NSObject, NSWindowDelegate {
     }
 
     deinit {
+        interestTracking?.cancel()
+        let outline = interestOutline
+        Task { @MainActor in outline.show(nil) }
         NotificationCenter.default.removeObserver(self)
         NSWorkspace.shared.notificationCenter.removeObserver(self)
     }
@@ -114,15 +220,29 @@ final class CompanionPanelController: NSObject, NSWindowDelegate {
     func setPresentedInHabitat(_ active: Bool) {
         guard active != presentedInHabitat else { return }
         presentedInHabitat = active
-        if active { window.orderOut(nil) }
+        if active { interaction.cancelPointerGesture(); dismissChatBubble(); window.orderOut(nil) }
         else if store.isVisible { window.orderFrontRegardless() }
     }
 
     func hide() {
+        interaction.cancelPointerGesture()
+        dismissChatBubble()
         store.invalidatePlacementPreview(reason: "Companion hidden. Preview again when shown.")
         store.isVisible = false
         window.orderOut(nil)
     }
+
+    func showChatBubble() {
+        guard store.isVisible, !store.isShuttingDown, !presentedInHabitat, window.isVisible else { return }
+        if store.desktopInterest.phase == .aiming {
+            refreshInterestTarget()
+            store.desktopInterest.finishAim()
+        }
+        if chatBubble == nil { chatBubble = CompanionChatBubbleController(store: store, companionWindow: window) }
+        if chatBubble?.show() != true { store.open(.assistant) }
+    }
+
+    func dismissChatBubble() { chatBubble?.dismiss() }
 
     func centerOnMainScreen() {
         guard let screen = NSScreen.main ?? NSScreen.screens.first else { return }
@@ -146,7 +266,9 @@ final class CompanionPanelController: NSObject, NSWindowDelegate {
                 width: 128 * scale, height: 154 * scale
             ), forceInvalidation: true)
         }
-        interaction.setAccessibilityValue(store.assistantAccessibilityValue)
+        // Published preferences arrive before the stored property is replaced.
+        // Use that incoming value so the spoken body never trails the drawing.
+        interaction.setAccessibilityValue(store.cursorAccessibilityValue(for: preferences))
     }
 
     private func move(to proposed: CGRect, pointer: CGPoint? = nil, forceInvalidation: Bool = false) {
@@ -159,15 +281,32 @@ final class CompanionPanelController: NSObject, NSWindowDelegate {
     private func publishPlacement(force: Bool = false) {
         let actual = CGPoint(x: window.frame.midX, y: window.frame.midY)
         if force || actual != store.position { store.placed(at: actual) }
+        chatBubble?.followCompanion()
     }
 
     private func recoverPlacement() { move(to: window.frame) }
+    private func refreshInterestTarget() {
+        let session = store.desktopInterest
+        guard window.isVisible, window.isOnActiveSpace, store.isVisible, !store.isShuttingDown else {
+            session.cancel(); interestOutline.show(nil); return
+        }
+        if session.phase == .aiming {
+            session.hover(at: CGPoint(x: window.frame.midX, y: window.frame.midY + window.frame.height * 0.12))
+        } else { session.refreshBoundary() }
+        let active = session.phase == .aiming || session.phase == .targeted || session.phase == .reading
+        interestOutline.show(active ? session.target?.frame : nil)
+    }
     @objc private func displaysChanged(_ notification: Notification) {
+        interaction.cancelPointerGesture()
+        store.desktopInterest.cancel(reason: "Display layout changed. Point at the window again.")
         store.invalidatePlacementPreview(reason: "Display layout changed. Preview again.")
         recoverPlacement()
     }
 
     @objc private func activeSpaceChanged(_ notification: Notification) {
+        interaction.cancelPointerGesture()
+        store.desktopInterest.cancel(reason: "Desktop space changed. Point again.")
+        dismissChatBubble()
         store.invalidateTextSelection(reason: "Desktop space changed. Select the passage again.")
     }
 
@@ -199,8 +338,9 @@ final class CompanionPanelController: NSObject, NSWindowDelegate {
             previewWindow = panel
         }
         previewWindow?.contentView = NSHostingView(rootView: PlacementGhostBody(
-            form: store.preferences.form, family: store.evolution.activeFamily, treatment: store.preferences.visualTreatment,
-            staysPut: preview.candidate.staysPut, recipe: store.evolution.activeAppearanceRecipe, naturalVariation: store.evolution.naturalVariation))
+            form: store.cursorPresentationForm, family: store.presentationFamily, treatment: store.preferences.visualTreatment,
+            staysPut: preview.candidate.staysPut, recipe: store.presentationRecipe,
+            naturalVariation: store.presentationNaturalVariation, equipment: store.preferences.equipment))
         previewWindow?.setFrame(preview.candidate.frame, display: true, animate: false)
         previewWindow?.orderFrontRegardless()
     }
@@ -218,10 +358,12 @@ private struct PlacementGhostBody: View {
     let staysPut: Bool
     let recipe: CompanionAppearanceRecipe?
     let naturalVariation: CompanionNaturalVariation?
+    let equipment: CompanionEquipment
     var body: some View {
         GeometryReader { geometry in
             VStack(spacing: 0) {
-                CompanionPresenceArt(form: form, family: family, size: geometry.size.width * 0.80, reduceMotion: true, treatment: treatment, recipe: recipe, naturalVariation: naturalVariation)
+                CompanionPresenceArt(form: form, family: family, size: geometry.size.width * 0.80, reduceMotion: true,
+                    treatment: treatment, recipe: recipe, naturalVariation: naturalVariation, equipment: equipment)
                     .opacity(staysPut ? 0 : 0.34).frame(maxHeight: .infinity)
                 Text(staysPut ? "STAY HERE" : "PREVIEW")
                     .font(.system(size: 9, weight: .semibold)).tracking(1)
@@ -237,7 +379,7 @@ private struct PlacementGhostBody: View {
     }
 }
 
-private struct FloatingCompanionBody: View {
+struct FloatingCompanionBody: View {
     @ObservedObject var store: CompanionStore
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
 
@@ -245,7 +387,18 @@ private struct FloatingCompanionBody: View {
         GeometryReader { geometry in
             let size = min(geometry.size.width, geometry.size.height * 128 / 154)
             VStack(spacing: 0) {
-                LiveCompanionPresence(store: store, size: size * 0.89)
+                LiveCompanionPresence(store: store, size: size * 0.89, role: .cursor)
+                    .overlay {
+                        if let playback = store.focusGesturePlayback,
+                           playback.purpose != .preview,
+                           playback.spatialPreviewID == store.spatialPreview?.id,
+                           store.preferences.equipment.hand == .focusStaff {
+                            FocusStaffGestureOverlay(playback: playback, size: size * 0.89,
+                                reduceMotion: store.preferences.quiet || store.preferences.reduceMotion || systemReduceMotion)
+                                .allowsHitTesting(false)
+                                .accessibilityHidden(true)
+                        }
+                    }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .overlay(alignment: .top) {
                         if store.assistantActivity != .idle {
@@ -279,10 +432,10 @@ private struct FloatingCompanionBody: View {
 private final class CompanionInteractionView: NSView {
     private let store: CompanionStore
     private let menuButton = NSButton()
-    private var startingPointer: CGPoint?
-    private var startingFrame: CGRect?
-    private var dragged = false
+    private var pointerGesture = CompanionPointerGesture()
     var move: ((CGRect, CGPoint?) -> Void)?
+    var openChat: (() -> Void)?
+    var finishPoint: (() -> Void)?
 
     init(store: CompanionStore) {
         self.store = store
@@ -306,7 +459,7 @@ private final class CompanionInteractionView: NSView {
         setAccessibilityElement(true)
         setAccessibilityRole(.button)
         setAccessibilityLabel("ARCHi desktop companion")
-        setAccessibilityHelp("Drag to place ARCHi. Click to open your assistant. Arrow keys move when focused; Escape hides. Right-click for the menu.")
+        setAccessibilityHelp("Drag to place ARCHi. Click to open the attached chat bubble. Arrow keys move when focused; Escape hides. Right-click for the menu.")
         setAccessibilityCustomActions([
             NSAccessibilityCustomAction(name: "Open ARCHi menu", target: self, selector: #selector(accessibilityMenu)),
             NSAccessibilityCustomAction(name: "Move ARCHi left", target: self, selector: #selector(accessibilityLeft)),
@@ -338,29 +491,33 @@ private final class CompanionInteractionView: NSView {
         if event.modifierFlags.contains(.control) { rightMouseDown(with: event); return }
         window?.makeKey()
         window?.makeFirstResponder(self)
-        startingPointer = NSEvent.mouseLocation
-        startingFrame = window?.frame
-        dragged = false
+        pointerGesture.begin(at: CompanionPointerLocation.screenPoint(for: event), frame: window?.frame)
     }
 
+    func cancelPointerGesture() { pointerGesture.cancel() }
+
     override func mouseDragged(with event: NSEvent) {
-        guard let origin = startingPointer, let frame = startingFrame else { return }
-        let pointer = NSEvent.mouseLocation
-        let dx = pointer.x - origin.x, dy = pointer.y - origin.y
-        guard dragged || hypot(dx, dy) >= 3 else { return }
-        dragged = true
-        move?(frame.offsetBy(dx: dx, dy: dy), pointer)
+        guard store.isVisible, !store.isShuttingDown, window?.isVisible == true else {
+            pointerGesture.cancel(); return
+        }
+        let pointer = CompanionPointerLocation.screenPoint(for: event)
+        if let proposed = pointerGesture.move(to: pointer) { move?(proposed, pointer) }
     }
 
     override func mouseUp(with event: NSEvent) {
-        guard startingPointer != nil else { return }
-        defer { startingPointer = nil; startingFrame = nil; dragged = false }
-        if !dragged { store.open(.assistant) }
+        guard store.isVisible, !store.isShuttingDown, window?.isVisible == true else {
+            pointerGesture.cancel(); return
+        }
+        let pointer = CompanionPointerLocation.screenPoint(for: event)
+        switch pointerGesture.release(at: pointer) {
+        case .click: openChat?()
+        case .moved(let proposed): move?(proposed, pointer); finishPoint?()
+        case .cancelled: break
+        }
     }
 
     override func rightMouseDown(with event: NSEvent) {
-        startingPointer = nil
-        startingFrame = nil
+        pointerGesture.cancel()
         NSMenu.popUpContextMenu(quickMenu(), with: event, for: self)
     }
 
@@ -371,14 +528,18 @@ private final class CompanionInteractionView: NSView {
         case 124: nudge(dx: step, dy: 0)
         case 125: nudge(dx: 0, dy: -step)
         case 126: nudge(dx: 0, dy: step)
-        case 53: store.hideCompanion()
-        case 36, 76: store.open(.assistant)
+        case 53:
+            if store.desktopInterest.phase != .idle { store.desktopInterest.cancel() }
+            else { store.hideCompanion() }
+        case 36, 76: openChat?()
         case 49: openMenu()
         default: super.keyDown(with: event)
         }
     }
 
-    override func accessibilityPerformPress() -> Bool { store.open(.assistant); return true }
+    override func accessibilityPerformPress() -> Bool {
+        guard let openChat else { return false }; openChat(); return true
+    }
 
     private func nudge(dx: CGFloat, dy: CGFloat) {
         guard let current = window?.frame else { return }
@@ -394,7 +555,8 @@ private final class CompanionInteractionView: NSView {
             return item
         }
         _ = add("Ask ARCHi…", #selector(ask))
-        _ = add("Look here…", #selector(context))
+        _ = add("Point at a window…", #selector(pointAtWindow))
+        _ = add("Work together…", #selector(context))
         menu.addItem(.separator())
         _ = add("Appearance…", #selector(openAppearance))
         let quiet = add("Quiet mode", #selector(toggleQuiet))
@@ -407,8 +569,9 @@ private final class CompanionInteractionView: NSView {
     }
 
     @objc private func openMenu() { quickMenu().popUp(positioning: nil, at: NSPoint(x: bounds.maxX - 18, y: 36), in: self) }
-    @objc private func ask() { store.open(.assistant) }
+    @objc private func ask() { openChat?() }
     @objc private func context() { store.open(.context) }
+    @objc private func pointAtWindow() { store.beginDesktopInterest() }
     @objc private func openAppearance() { store.open(.appearance) }
     @objc private func toggleQuiet() { store.preferences.quiet.toggle() }
     @objc private func settings() { store.open(.rhythm) }

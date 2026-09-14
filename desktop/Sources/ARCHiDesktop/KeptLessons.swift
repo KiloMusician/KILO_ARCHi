@@ -128,13 +128,16 @@ private enum LessonValidation {
 /// A versioned extension of the existing native preference file, not another
 /// memory database. Preferences and explicitly kept lessons can be forgotten separately.
 struct NativePreferenceDocument: Codable, Equatable {
-    static let currentSchema = "archi-native-preferences/v2"
+    static let currentSchema = "archi-native-preferences/v4"
+    private static let previousSchemas = ["archi-native-preferences/v2", "archi-native-preferences/v3"]
     static let maximumBytes = 64 * 1024
     static let maximumLessons = 16
     var schema = Self.currentSchema
     var revision: UInt64 = 0
     var preferences: CompanionPreferences? = nil
     var lessons: [KeptLesson] = []
+    var focusGesture: FocusGestureConfiguration? = nil
+    var qiMon: LocalQiMon? = nil
 
     static func validateLessonSnapshots(_ snapshots: [LessonSnapshot]) -> Bool {
         snapshots.count <= maximumLessons && snapshots.allSatisfy(\.isValid)
@@ -143,6 +146,7 @@ struct NativePreferenceDocument: Codable, Equatable {
 
     var isValid: Bool {
         schema == Self.currentSchema && (preferences?.isValid ?? true)
+            && (qiMon?.isValid ?? true)
             && lessons.allSatisfy(\.isValid)
             && Self.validateLessonSnapshots(lessons.map(LessonSnapshot.init(lesson:)))
     }
@@ -156,11 +160,22 @@ struct NativePreferenceDocument: Codable, Equatable {
         }
         let document: Self
         if object.keys.contains("schema") {
-            guard object["schema"] as? String == currentSchema else { throw NativePreferenceError.unsupportedSchema }
-            try validateKeys(object, required: ["schema", "revision", "lessons"], optional: ["preferences"])
+            guard let schema = object["schema"] as? String,
+                  schema == currentSchema || previousSchemas.contains(schema) else { throw NativePreferenceError.unsupportedSchema }
+            let optional: Set<String> = schema == currentSchema ? ["preferences", "focusGesture", "qiMon"]
+                : schema == "archi-native-preferences/v3" ? ["preferences", "focusGesture"] : ["preferences"]
+            try validateKeys(object, required: ["schema", "revision", "lessons"], optional: optional)
             if let preferences = object["preferences"], !(preferences is NSNull) {
                 guard let fields = preferences as? [String: Any] else { throw NativePreferenceError.invalidDocument }
                 try validatePreferenceKeys(fields)
+            }
+            if let focusGesture = object["focusGesture"], !(focusGesture is NSNull) {
+                guard let fields = focusGesture as? [String: Any] else { throw NativePreferenceError.invalidDocument }
+                try validateKeys(fields, required: ["pace", "sparkle", "hold"])
+            }
+            if let qiMon = object["qiMon"], !(qiMon is NSNull) {
+                guard let fields = qiMon as? [String: Any] else { throw NativePreferenceError.invalidDocument }
+                try validateKeys(fields, required: ["character", "originDigest", "welcomedAt"])
             }
             guard let lessons = object["lessons"] as? [[String: Any]] else { throw NativePreferenceError.invalidDocument }
             for lesson in lessons {
@@ -173,7 +188,11 @@ struct NativePreferenceDocument: Codable, Equatable {
                     }
                 }
             }
-            document = try JSONDecoder().decode(Self.self, from: data)
+            var decoded = try JSONDecoder().decode(Self.self, from: data)
+            // Loading a known older envelope migrates in memory only. Its exact
+            // bytes remain the write-conflict baseline until an explicit save.
+            decoded.schema = currentSchema
+            document = decoded
         } else {
             // Only the known bare preference shape migrates. An envelope missing
             // its schema must not silently shed lessons or an unknown version.
@@ -196,7 +215,7 @@ struct NativePreferenceDocument: Codable, Equatable {
 
     private static func validatePreferenceKeys(_ object: [String: Any]) throws {
         try validateKeys(object, required: ["form", "tone", "replyLength", "size", "adaptive", "reduceMotion", "quiet"],
-                         optional: ["visualTreatment"])
+                         optional: ["visualTreatment", "equipment", "musicalCues", "musicalVolume"])
     }
 
     private static func validateKeys(_ object: [String: Any], required: Set<String>, optional: Set<String> = []) throws {
@@ -233,7 +252,7 @@ enum NativePreferencePersistence {
     static func write(document: NativePreferenceDocument, to url: URL, expected: Data?) throws -> Data? {
         let data = try document.encoded()
         guard try rawData(at: url) == expected else { throw NativePreferenceError.conflict }
-        if document.preferences == nil && document.lessons.isEmpty {
+        if document.preferences == nil && document.lessons.isEmpty && document.focusGesture == nil && document.qiMon == nil {
             if expected != nil { try FileManager.default.removeItem(at: url) }
             return nil
         }

@@ -61,16 +61,19 @@ struct PlayWorkspace: View {
         }
         .onDisappear { host.setVisible(false) }
         .onChange(of: store.preferences) { _, _ in updateAppearance() }
+        .onChange(of: store.activeQiMon) { _, _ in updateAppearance() }
         .onChange(of: store.evolution.revision) { _, _ in updateAppearance() }
         .onChange(of: store.reactor.frameRevision) { _, _ in updateAppearance() }
         .onChange(of: systemReduceMotion) { _, _ in updateAppearance() }
     }
 
     private func updateAppearance() {
-        host.updateAppearance(form: store.preferences.form, family: store.evolution.activeFamily,
+        host.updateAppearance(form: store.presentationForm, family: store.presentationFamily,
             reduceMotion: store.preferences.reduceMotion || store.preferences.quiet || systemReduceMotion,
             treatment: store.preferences.visualTreatment,
-            expressionPNG: store.reactor.framePNG, expressionRevision: store.reactor.frameRevision,
-            recipe: store.evolution.activeAppearanceRecipe, naturalVariation: store.evolution.naturalVariation)
+            expressionPNG: store.reactorReferenceMatchesCurrentAppearance ? store.reactor.framePNG : nil,
+            expressionRevision: store.reactor.frameRevision,
+            recipe: store.presentationRecipe, naturalVariation: store.presentationNaturalVariation,
+            equipment: store.preferences.equipment)
     }
 }

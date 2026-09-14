@@ -16,6 +16,7 @@ struct QwenRoleTransportTests {
             #expect(result.role == role)
             #expect(result.model == client.metadata)
             #expect(result.elapsedMilliseconds >= 0)
+            #expect(result.metrics == nil)
             let answer = try JSONDecoder().decode(JSONValue.self, from: Data(result.text.utf8))
             #expect(answer["requestID"]?.string == request.id)
             #expect(answer["answer"]?.string == "B 🌙")
@@ -51,6 +52,31 @@ struct QwenRoleTransportTests {
         #expect(result.model.parameterSize == "8.2B")
         #expect(result.model.quantization == "Q4_K_M")
         #expect(result.model.digest == String(repeating: "a", count: 64))
+    }
+
+    @Test func terminalMetricsReachTheRoleResultWithoutAdditionalRequests() async throws {
+        let client = makeClient(.metrics)
+        defer { client.disconnect() }
+        try await client.connect()
+        let result = try await client.generate(roleRequest())
+        client.disconnect()
+        #expect(result.metrics == LocalInferenceMetrics(inputTokens: 45, outputTokens: 12,
+            totalNanoseconds: 9_000_000, loadNanoseconds: 1_000_000,
+            promptEvaluationNanoseconds: 2_000_000, evaluationNanoseconds: 6_000_000))
+        #expect(QwenRoleFixtureProtocol.state.requests.map(\.url!.path) == [
+            "/api/tags", "/api/show", "/api/tags", "/api/show", "/api/chat"])
+    }
+
+    @Test func malformedMetricsRemainDiagnosticsAfterSuccessfulGeneration() async throws {
+        let client = makeClient(.malformedMetrics)
+        defer { client.disconnect() }
+        try await client.connect()
+        let result = try await client.generate(roleRequest())
+        let answer = try JSONDecoder().decode(JSONValue.self, from: Data(result.text.utf8))
+        #expect(answer["answer"]?.string == "B 🌙")
+        #expect(result.metrics == LocalInferenceMetrics(outputTokens: 12,
+            malformedFields: ["prompt_eval_count", "total_duration", "eval_duration"]))
+        #expect(QwenRoleFixtureProtocol.state.requests.filter { $0.url?.path == "/api/chat" }.count == 1)
     }
 
     @Test func inputSchemaAndEscapedWireBytesShareOnePreflightBudget() async throws {
@@ -180,7 +206,7 @@ struct QwenRoleTransportTests {
 }
 
 private enum QwenRoleFixtureMode: Sendable {
-    case normal, noDone, nonJSON, changedDigest, wrongModel, holdFirstChat
+    case normal, noDone, nonJSON, changedDigest, wrongModel, holdFirstChat, metrics, malformedMetrics
 }
 
 private final class QwenRoleFixtureState: @unchecked Sendable {
@@ -248,7 +274,24 @@ private final class QwenRoleFixtureProtocol: URLProtocol, @unchecked Sendable {
             send(chunk(String(answer[..<split]), model: model, done: false), newline: true)
             if fixture.mode == .holdFirstChat && fixture.chats == 1 { return }
             send(chunk(String(answer[split...]), model: model, done: false), newline: true)
-            if fixture.mode != .noDone { send(chunk("", model: model, done: true), newline: true) }
+            if fixture.mode != .noDone {
+                var terminal = chunk("", model: model, done: true).object!
+                if fixture.mode == .metrics {
+                    terminal["prompt_eval_count"] = .number(45)
+                    terminal["eval_count"] = .number(12)
+                    terminal["total_duration"] = .number(9_000_000)
+                    terminal["load_duration"] = .number(1_000_000)
+                    terminal["prompt_eval_duration"] = .number(2_000_000)
+                    terminal["eval_duration"] = .number(6_000_000)
+                } else if fixture.mode == .malformedMetrics {
+                    terminal["prompt_eval_count"] = .number(-1)
+                    terminal["eval_count"] = .number(12)
+                    terminal["total_duration"] = .string("9000000")
+                    terminal["load_duration"] = .null
+                    terminal["eval_duration"] = .number(9_007_199_254_740_992)
+                }
+                send(.object(terminal), newline: true)
+            }
         default:
             client?.urlProtocol(self, didFailWithError: URLError(.badURL)); return
         }

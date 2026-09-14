@@ -4,16 +4,29 @@ import SwiftUI
 @MainActor
 extension CompanionStore {
     func refreshReactorReference(family: EvolutionFamily? = nil, usesExplicitFamily: Bool = false) {
-        let selectedFamily = usesExplicitFamily ? family : evolution.activeFamily
-        let recipe = evolution.activeAppearanceRecipe
-        let id = CompanionVisualAsset.appearanceID(form: preferences.form, family: selectedFamily, treatment: preferences.visualTreatment, recipe: recipe, naturalVariation: evolution.naturalVariation)
+        let selectedFamily = hasPersonalQiMon ? nil : (usesExplicitFamily ? family : evolution.activeFamily)
+        let recipe = presentationRecipe
+        let id = CompanionVisualAsset.appearanceID(form: presentationForm, family: selectedFamily,
+            treatment: preferences.visualTreatment, recipe: recipe, naturalVariation: presentationNaturalVariation,
+            equipment: preferences.equipment)
         let bytes = reactor.appearanceID == id ? reactor.referencePNG : CompanionPresenceArt.png(
-            form: preferences.form, family: selectedFamily, treatment: preferences.visualTreatment, recipe: recipe, naturalVariation: evolution.naturalVariation)
+            form: presentationForm, family: selectedFamily, treatment: preferences.visualTreatment,
+            recipe: recipe, naturalVariation: presentationNaturalVariation, equipment: preferences.equipment)
         reactor.updateReference(id: id,
-            label: CompanionVisualAsset.label(form: preferences.form, family: selectedFamily, treatment: preferences.visualTreatment, recipe: recipe, naturalVariation: evolution.naturalVariation),
+            label: CompanionVisualAsset.label(form: presentationForm, family: selectedFamily,
+                treatment: preferences.visualTreatment, recipe: recipe, naturalVariation: presentationNaturalVariation,
+                equipment: preferences.equipment),
             png: bytes,
             motionAllowed: !preferences.quiet && !preferences.reduceMotion && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
             visible: isVisible && !(NSApp?.isHidden ?? false))
+    }
+
+    /// A candidate frame is usable only for the current body and equipped item.
+    /// Preference changes may redraw SwiftUI before the reference observer runs.
+    var reactorReferenceMatchesCurrentAppearance: Bool {
+        reactor.appearanceID == CompanionVisualAsset.appearanceID(form: presentationForm, family: presentationFamily,
+            treatment: preferences.visualTreatment, recipe: presentationRecipe,
+            naturalVariation: presentationNaturalVariation, equipment: preferences.equipment)
     }
 }
 
@@ -22,18 +35,30 @@ extension CompanionStore {
 struct LiveCompanionPresence: View {
     @ObservedObject var store: CompanionStore
     let size: CGFloat
+    var role: CompanionPresentationRole = .body
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     var body: some View {
+        let form = store.presentationForm(for: store.preferences, role: role)
         Group {
-            if !store.preferences.quiet && !store.preferences.reduceMotion && !systemReduceMotion,
+            // KIN's authored Seed and event-bound light remain native. A full
+            // generated raster must not replace his body or contradict a cue.
+            if !store.hasPersonalQiMon,
+               !store.preferences.quiet && !store.preferences.reduceMotion && !systemReduceMotion,
+               store.reactorReferenceMatchesCurrentAppearance,
                let image = store.reactor.frameImage {
                 Image(nsImage: image).resizable().interpolation(.high).scaledToFit()
-                    .accessibilityLabel("ARCHi · " + store.reactor.state.title)
+                    .accessibilityLabel("ARCHi · " + CompanionVisualAsset.label(form: form,
+                        family: store.presentationFamily, treatment: store.preferences.visualTreatment,
+                        recipe: store.presentationRecipe, naturalVariation: store.presentationNaturalVariation,
+                        equipment: store.preferences.equipment) + " · " + store.reactor.state.title)
             } else {
-                CompanionPresenceArt(form: store.preferences.form, family: store.evolution.activeFamily,
+                CompanionPresenceArt(form: form, family: store.presentationFamily,
                     size: size, reduceMotion: store.preferences.reduceMotion || systemReduceMotion || store.preferences.quiet,
-                    treatment: store.preferences.visualTreatment, recipe: store.evolution.activeAppearanceRecipe, naturalVariation: store.evolution.naturalVariation)
+                    treatment: store.preferences.visualTreatment, recipe: store.presentationRecipe,
+                    naturalVariation: store.presentationNaturalVariation, equipment: store.preferences.equipment,
+                    lightExpression: store.kinLightExpression)
             }
         }.frame(width: size, height: size)
+        .accessibilityValue(store.activeQiMon == nil ? "" : store.kinLightExpression.label)
     }
 }

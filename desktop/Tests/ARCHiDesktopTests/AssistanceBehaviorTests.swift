@@ -54,7 +54,7 @@ final class AssistanceBehaviorTests: XCTestCase {
                 XCTAssertEqual(store.assistantActivity, .ready)
                 XCTAssertEqual(receipt.settings?.helpStyle, style)
                 XCTAssertEqual(receipt.localInvocations, [.reasoning])
-                XCTAssertEqual(receipt.inputContract, "native-assistant-input/v3")
+                XCTAssertEqual(receipt.inputContract, "native-assistant-input/v4")
                 XCTAssertFalse(lane.text.isEmpty)
                 XCTAssertTrue(lane.text.lowercased().contains("tree") || lane.text.lowercased().contains("draw"), lane.text)
                 XCTAssertTrue(store.compareResults[.codex] == nil)

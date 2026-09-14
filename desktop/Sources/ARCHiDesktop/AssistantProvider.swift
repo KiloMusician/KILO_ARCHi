@@ -8,7 +8,7 @@ enum AssistantProvider: String, CaseIterable, Identifiable, Hashable, Sendable {
     var detail: String {
         self == .qwen
             ? "Use an installed Qwen model through Ollama on this Mac."
-            : "Use the ChatGPT account already signed in to Codex on this Mac."
+            : "Optional external reference or alternative through your existing Codex account. Sending shares the current request with the provider."
     }
     var destination: String { self == .qwen ? "Qwen on this Mac" : "Codex through ChatGPT" }
 }

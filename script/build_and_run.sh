@@ -4,11 +4,17 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VERIFY=0
 REVIEW=0
+INSTALL=0
+LAUNCH=1
+STAGE_ONLY=0
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --verify) VERIFY=1 ;;
         --review) REVIEW=1 ;;
-        *) echo "Usage: $0 [--verify] [--review]" >&2; exit 2 ;;
+        --install) INSTALL=1 ;;
+        --build-only) LAUNCH=0 ;;
+        --stage-only) STAGE_ONLY=1; LAUNCH=0 ;;
+        *) echo "Usage: $0 [--verify] [--review] [--install] [--build-only] [--stage-only]" >&2; exit 2 ;;
     esac
     shift
 done
@@ -22,6 +28,18 @@ if [[ "$REVIEW" == 1 ]]; then
     APP_IDENTIFIER="com.quotient.archi.desktop.review"
     APP_DIR="/private/tmp/archi-desktop-review-${UID}/$APP_NAME.app"
     PREVIOUS_EXECUTABLE=""
+fi
+TEMP_APP_EXECUTABLE="$APP_DIR/Contents/MacOS/ARCHiDesktop"
+INSTALLED_APP_EXECUTABLE="/Applications/$APP_NAME.app/Contents/MacOS/ARCHiDesktop"
+if [[ "$INSTALL" == 1 ]]; then
+    # A real bundle survives temporary-directory cleanup and is discoverable
+    # through Finder, Spotlight and the Dock. Profiles retain their bundle IDs.
+    APP_DIR="/Applications/$APP_NAME.app"
+fi
+if [[ "$STAGE_ONLY" == 1 ]]; then
+    # Use a local staging directory outside synced Documents; Finder metadata
+    # can be reattached there during signature verification.
+    APP_DIR="/private/tmp/archi-desktop-candidate-${UID}/$APP_NAME.app"
 fi
 APP_EXECUTABLE="$APP_DIR/Contents/MacOS/ARCHiDesktop"
 
@@ -39,8 +57,10 @@ require_selected_app_stopped() {
     while IFS= read -r process_id; do
         [[ -n "$process_id" ]] || continue
         process_command="$(ps -p "$process_id" -o comm= 2>/dev/null || true)"
-        if [[ "$process_command" == "$APP_EXECUTABLE" ||
-              ( -n "$PREVIOUS_EXECUTABLE" && "$process_command" == "$PREVIOUS_EXECUTABLE" ) ]]; then
+        if [[ "$process_command" == "$APP_EXECUTABLE" || ( "$STAGE_ONLY" == 0 && (
+              "$process_command" == "$TEMP_APP_EXECUTABLE" ||
+              "$process_command" == "$INSTALLED_APP_EXECUTABLE" ||
+              ( -n "$PREVIOUS_EXECUTABLE" && "$process_command" == "$PREVIOUS_EXECUTABLE" ) ) ) ]]; then
             echo "$APP_NAME is still running. This build will not replace its open session." >&2
             echo "Export any working draft, save the choices you want to keep, then choose Quit in $APP_NAME. Wait for it to close and rerun this command." >&2
             return 1
@@ -52,53 +72,39 @@ require_selected_app_stopped() {
 # quits through the app so its normal Habitat, model and Reactor cleanup runs.
 require_selected_app_stopped
 
-# Build the same TypeScript/Vite production entry into a private staging folder.
-# The user's currently served browser dist is preserved during native review.
-PLAY_STAGE="$(mktemp -d /private/tmp/archi-play-bundle.XXXXXX)"
-trap 'rm -rf "$PLAY_STAGE"' EXIT
-(cd "$REPO_ROOT" && npm exec -- tsc --noEmit && npm exec -- vite build --outDir "$PLAY_STAGE/Play")
-mkdir -p "$PLAY_STAGE/Play/pwa/icons"
-cp "$REPO_ROOT/pwa/manifest.webmanifest" "$PLAY_STAGE/Play/pwa/manifest.webmanifest"
-cp "$REPO_ROOT"/pwa/icons/*.png "$PLAY_STAGE/Play/pwa/icons/"
-# The native host owns asset availability and intentionally has no service worker.
-test -f "$PLAY_STAGE/Play/index.html"
-test ! -e "$PLAY_STAGE/Play/service-worker.js"
+# Desktop-only development: retained game source is neither rebuilt nor bundled.
+# Re-enabling play is a separate product decision, not a launch dependency.
+PLAY_STAGE="$(mktemp -d /private/tmp/archi-desktop-bundle.XXXXXX)"
+BUNDLE_DIR="$PLAY_STAGE/$APP_NAME.app"
+INSTALL_STAGE=""
+trap 'rm -rf "$PLAY_STAGE"; if [[ -n "$INSTALL_STAGE" ]]; then rm -rf "$INSTALL_STAGE"; fi' EXIT
 
 swift build --package-path "$REPO_ROOT/desktop"
 if [[ "$VERIFY" == 1 ]]; then swift test --package-path "$REPO_ROOT/desktop"; fi
 BIN_DIR="$(swift build --package-path "$REPO_ROOT/desktop" --show-bin-path)"
-mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
+mkdir -p "$BUNDLE_DIR/Contents/MacOS" "$BUNDLE_DIR/Contents/Resources"
 # Building can take time. Recheck in case this profile was opened meanwhile,
 # immediately before replacing its executable or generated resources.
 require_selected_app_stopped
-cp "$BIN_DIR/ARCHiDesktop" "$APP_EXECUTABLE"
-# Replace only the generated game resources in this selected development bundle.
-if [[ -e "$APP_DIR/Contents/Resources/Play" ]]; then
-    mv "$APP_DIR/Contents/Resources/Play" "$PLAY_STAGE/PreviousPlay"
-fi
-cp -R "$PLAY_STAGE/Play" "$APP_DIR/Contents/Resources/Play"
+cp "$BIN_DIR/ARCHiDesktop" "$BUNDLE_DIR/Contents/MacOS/ARCHiDesktop"
 # The native art loader uses this packaged location, never a development fallback.
-if [[ -e "$APP_DIR/Contents/Resources/CompanionArt" ]]; then
-    mv "$APP_DIR/Contents/Resources/CompanionArt" "$PLAY_STAGE/PreviousCompanionArt"
-fi
-cp -R "$REPO_ROOT/desktop/Sources/ARCHiDesktop/Resources/CompanionArt" "$APP_DIR/Contents/Resources/CompanionArt"
-test -f "$APP_DIR/Contents/Resources/CompanionArt/archi-pearl-study-v1.png"
-mkdir -p "$APP_DIR/Contents/Resources/ReactorBridge"
-cp "$REPO_ROOT/desktop/Sources/ARCHiDesktop/Resources/ReactorBridge/worker.py" "$APP_DIR/Contents/Resources/ReactorBridge/worker.py"
+cp -R "$REPO_ROOT/desktop/Sources/ARCHiDesktop/Resources/CompanionArt" "$BUNDLE_DIR/Contents/Resources/CompanionArt"
+test -f "$BUNDLE_DIR/Contents/Resources/CompanionArt/archi-pearl-study-v1.png"
+cp -R "$REPO_ROOT/desktop/Sources/ARCHiDesktop/Resources/Branding" "$BUNDLE_DIR/Contents/Resources/Branding"
+cp "$BUNDLE_DIR/Contents/Resources/Branding/AppIcon.icns" "$BUNDLE_DIR/Contents/Resources/AppIcon.icns"
+mkdir -p "$BUNDLE_DIR/Contents/Resources/ReactorBridge"
+cp "$REPO_ROOT/desktop/Sources/ARCHiDesktop/Resources/ReactorBridge/worker.py" "$BUNDLE_DIR/Contents/Resources/ReactorBridge/worker.py"
 # A native button has the app's filesystem access, not Codex's Documents access.
 # Copy the already-installed runtime into this generated app so Python startup
 # never waits on a repository-local pyvenv.cfg or site-packages privacy prompt.
 REACTOR_SOURCE_RUNTIME="$REPO_ROOT/output/creative-tools/reactor/runtime"
 REACTOR_APP_RUNTIME="$APP_DIR/Contents/Resources/ReactorRuntime"
-if [[ -d "$REACTOR_APP_RUNTIME" ]]; then
-    mv "$REACTOR_APP_RUNTIME" "$PLAY_STAGE/PreviousReactorRuntime"
-fi
 if [[ -x "$REACTOR_SOURCE_RUNTIME/bin/python3" ]]; then
     # Copy interpreter launchers by value: signed app bundles cannot contain
     # symlinks escaping to the external Python framework.
-    cp -RL "$REACTOR_SOURCE_RUNTIME" "$REACTOR_APP_RUNTIME"
+    cp -RL "$REACTOR_SOURCE_RUNTIME" "$BUNDLE_DIR/Contents/Resources/ReactorRuntime"
 fi
-cat > "$APP_DIR/Contents/Info.plist" <<PLIST
+cat > "$BUNDLE_DIR/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
@@ -107,20 +113,55 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
 <key>CFBundleIdentifier</key><string>$APP_IDENTIFIER</string>
 <key>CFBundleName</key><string>$APP_NAME</string>
 <key>CFBundleDisplayName</key><string>$APP_NAME</string>
+<key>CFBundleIconFile</key><string>AppIcon</string>
 <key>CFBundleVersion</key><string>1</string>
 <key>CFBundleShortVersionString</key><string>0.7.0</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>NSPrincipalClass</key><string>NSApplication</string>
 <key>NSHighResolutionCapable</key><true/>
+<key>NSMicrophoneUsageDescription</key><string>ARCHi uses the microphone only when you click Dictate, to prepare text you review before sending. Audio is not saved.</string>
+<key>NSSpeechRecognitionUsageDescription</key><string>ARCHi uses available on-device speech recognition to prepare a draft. No online speech fallback is used, and nothing is sent until you choose Send.</string>
 <key>ARCHiReactorPython</key><string>$REACTOR_APP_RUNTIME/bin/python3</string>
 <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
 </dict></plist>
 PLIST
-plutil -lint "$APP_DIR/Contents/Info.plist"
+plutil -lint "$BUNDLE_DIR/Contents/Info.plist"
 # Finder may attach metadata after a preview is opened; remove it only from this
 # regenerated development bundle before signing the next build.
-xattr -cr "$APP_DIR"
-codesign --force --sign - "$APP_DIR"
-codesign --verify --deep --strict "$APP_DIR"
-open -n "$APP_DIR"
-echo "Built and requested launch: $APP_DIR"
+xattr -cr "$BUNDLE_DIR"
+codesign --force --sign - "$BUNDLE_DIR"
+codesign --verify --deep --strict "$BUNDLE_DIR"
+# Only promote a complete signed bundle. Keep the previous installation as a
+# recoverable sibling; application-support data is never copied or replaced.
+require_selected_app_stopped
+mkdir -p "$(dirname "$APP_DIR")"
+# Copy and verify before touching the previous bundle. The two final renames
+# then stay on the destination filesystem, including on a separate volume.
+INSTALL_STAGE="$(mktemp -d "$(dirname "$APP_DIR")/.archi-install.XXXXXX")"
+cp -R "$BUNDLE_DIR" "$INSTALL_STAGE/$APP_NAME.app"
+# Finder/iCloud can attach metadata while a generated bundle is copied into
+# Documents. Clear it on this new staging copy before verifying its signature.
+xattr -cr "$INSTALL_STAGE/$APP_NAME.app"
+codesign --verify --deep --strict "$INSTALL_STAGE/$APP_NAME.app"
+require_selected_app_stopped
+PREVIOUS_BUNDLE=""
+if [[ -e "$APP_DIR" || -L "$APP_DIR" ]]; then
+    PREVIOUS_BUNDLE="$APP_DIR.previous.$(date +%Y%m%d-%H%M%S).$$"
+    mv "$APP_DIR" "$PREVIOUS_BUNDLE"
+fi
+if ! mv "$INSTALL_STAGE/$APP_NAME.app" "$APP_DIR"; then
+    if [[ -n "$PREVIOUS_BUNDLE" && ! -e "$APP_DIR" && ! -L "$APP_DIR" ]]; then
+        mv "$PREVIOUS_BUNDLE" "$APP_DIR"
+        echo "Could not install $APP_NAME; the previous bundle was restored." >&2
+    else
+        echo "Could not install $APP_NAME. Any previous bundle remains at: ${PREVIOUS_BUNDLE:-none (first install)}" >&2
+    fi
+    exit 1
+fi
+if [[ "$LAUNCH" == 1 ]]; then
+    open "$APP_DIR"
+    echo "Built and requested launch: $APP_DIR"
+else
+    echo "Built without launch: $APP_DIR"
+fi
+if [[ -n "$PREVIOUS_BUNDLE" ]]; then echo "Previous bundle preserved: $PREVIOUS_BUNDLE"; fi

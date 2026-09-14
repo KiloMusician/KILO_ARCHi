@@ -226,6 +226,7 @@ final class CompanionEvolutionTests: XCTestCase {
             $0.removeValue(forKey: "reviewedPractices")
             $0.removeValue(forKey: "keptBasis")
             $0.removeValue(forKey: "keptAppearanceRecipe")
+            $0.removeValue(forKey: "kinGrowthRecord")
             var history = $0["history"] as! [[String: Any]]
             for index in history.indices { history[index].removeValue(forKey: "appearanceRecipe") }
             $0["history"] = history
@@ -341,9 +342,9 @@ final class CompanionEvolutionTests: XCTestCase {
         XCTAssertLessThanOrEqual(bytes.count, EvolutionStore.maximumSaveBytes)
         let object = try XCTUnwrap(try JSONSerialization.jsonObject(with: bytes) as? [String: Any])
         XCTAssertEqual(Set(object.keys), ["schema", "origin", "role", "helpStyle", "family", "activeFamily", "usefulReceipts", "history",
-            "practiceJourneyOriginDigest", "reviewedPractices", "keptBasis", "keptAppearanceRecipe"])
+            "practiceJourneyOriginDigest", "reviewedPractices", "keptBasis", "keptAppearanceRecipe", "kinGrowthRecord"])
         let rows = try XCTUnwrap(object["usefulReceipts"] as? [[String: Any]])
-        XCTAssertTrue(rows.allSatisfy { Set($0.keys) == ["requestID", "sourceDigest"] })
+        XCTAssertTrue(rows.allSatisfy { Set($0.keys) == ["requestID", "sourceDigest", "requestBinding"] })
         XCTAssertEqual(object["origin"] as? String, "Guide light")
         let differentOrigin = EvolutionStore(origin: .ink, saveURL: url)
         XCTAssertEqual(differentOrigin.origin, .ink)

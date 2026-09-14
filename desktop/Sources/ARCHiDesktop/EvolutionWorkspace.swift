@@ -9,6 +9,8 @@ struct EvolutionWorkspace: View {
     @State private var showForget = false
     @State private var showReplace = false
     @State private var showLoad = false
+    @State var lifeRecordsExpanded = false
+    @State var usefulnessRecordsExpanded = false
 
     private var shownForm: CompanionForm { store.preferences.form }
     private var shownFamily: EvolutionFamily? { evolution.previewFamily ?? evolution.activeFamily }
@@ -27,6 +29,11 @@ struct EvolutionWorkspace: View {
             recipe: shownRecipe, naturalVariation: evolution.naturalVariation)
     }
     private var supportsNaturalDetails: Bool { shownForm == .companion && (shownFamily == nil || shownFamily == .lumen) }
+    private var lifeRecordSummary: String {
+        let requests = evolution.usefulReceipts.count
+        let lessons = evolution.usefulReceipts.filter { $0.lessonUse != nil }.count
+        return "\(requests) useful request\(requests == 1 ? "" : "s") · \(lessons) lesson reference\(lessons == 1 ? "" : "s") retained"
+    }
     private var individualDetailValue: String {
         if shownRecipe != nil { return "Earlier kept details" }
         if shownNaturalVariation != nil { return "Present from the beginning" }
@@ -41,15 +48,22 @@ struct EvolutionWorkspace: View {
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
+            if store.hasPersonalQiMon {
+                QiMonCard(store: store)
+                KinGrowthCard(store: store, evolution: evolution)
+                kinBeginning
+                knowledge
+                lifeTogether
+                DisclosureGroup("Saved development records") { continuity.padding(.top, 16) }
+            } else {
             hero
             individualDetails
             knowledge
             DisclosureGroup("Optional larger form studies") { families.padding(.top, 16) }
                 .accessibilityIdentifier("evolution-optional-form-studies")
-            DisclosureGroup("Life together · inspect retained records") {
-                VStack(alignment: .leading, spacing: 18) { sharedWork; practice }.padding(.top, 16)
-            }.accessibilityIdentifier("evolution-life-records")
+            lifeTogether
             continuity
+            }
         }
         .onAppear { roleChoice = evolution.confirmedRole; helpChoice = evolution.confirmedHelpStyle }
         .onChange(of: evolution.confirmedRole) { _, value in roleChoice = value }
@@ -63,6 +77,52 @@ struct EvolutionWorkspace: View {
         .confirmationDialog("Load saved evolution?", isPresented: $showLoad, titleVisibility: .visible) {
             Button("Load saved evolution") { evolution.load() }
         } message: { Text("This replaces the evolution choices in this session with the last saved version. Unsaved evolution changes will be lost.") }
+    }
+
+    private var kinBeginning: some View {
+        WorkspaceCard {
+            VStack(alignment: .leading, spacing: 14) {
+                sectionTitle("Growing together", detail: "One KIN, with the same name, core and Journey across his bodies.")
+                developmentExplanation("Motion and light", systemImage: "sparkles",
+                    detail: "Gentle movement and temporary light cues show what KIN is doing. They settle back into his existing form.")
+                developmentExplanation("What you teach", systemImage: "text.bubble",
+                    detail: "Your confirmed role and help style guide replies. Lessons you explicitly keep can help with matching local Qwen questions; you can correct or forget them.")
+                developmentExplanation("What helped", systemImage: "checkmark.message",
+                    detail: "Mark a reply about a shared document as useful, or confirm that a kept lesson helped. Inspect or withdraw that feedback in Life together, then Save evolution to retain the changes.")
+                developmentExplanation("Growing into a form", systemImage: "leaf",
+                    detail: "First Light can follow a kept lesson you confirmed helped. Preview and Keep are your choices; Core Seed remains available. Stirring, Verse and Horizon are still design studies.")
+                Button("Review kept lessons") { store.open(.memory) }
+                    .buttonStyle(.borderless)
+                    .accessibilityIdentifier("evolution-kept-lessons")
+            }
+        }.accessibilityIdentifier("evolution-kin-development")
+    }
+
+    private func developmentExplanation(_ title: String, systemImage: String, detail: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: systemImage).foregroundStyle(ArchiPalette.violet).frame(width: 20)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title).font(.system(size: 13, weight: .medium))
+                Text(detail).font(.system(size: 12)).foregroundStyle(.secondary).lineSpacing(3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private var lifeTogether: some View {
+        DisclosureGroup(isExpanded: $lifeRecordsExpanded) {
+            VStack(alignment: .leading, spacing: 18) {
+                sharedWork
+                if !store.hasPersonalQiMon && store.allowsPlay { practice }
+            }.padding(.top, 16)
+        } label: {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Life together · inspect retained records")
+                Text(lifeRecordSummary)
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("evolution-life-record-counts")
+            }
+        }.accessibilityIdentifier("evolution-life-records")
     }
 
     private var hero: some View {
@@ -97,7 +157,7 @@ struct EvolutionWorkspace: View {
         VStack(spacing: 8) {
             CompanionPresenceArt(form: shownForm, family: shownFamily, size: 208, reduceMotion: true,
                 treatment: store.preferences.visualTreatment, recipe: shownRecipe,
-                naturalVariation: evolution.naturalVariation)
+                naturalVariation: evolution.naturalVariation, equipment: store.preferences.equipment)
             Text(shownName).font(.system(size: 14, weight: .medium))
             Text(evolution.previewFamily == nil ? "YOUR INDIVIDUAL" : "APPEARANCE PREVIEW")
                 .font(.system(size: 8)).tracking(1.5).foregroundStyle(.white.opacity(0.55))
@@ -150,7 +210,7 @@ struct EvolutionWorkspace: View {
                 Divider()
                 individualFact("Individual details", value: individualDetailValue,
                     detail: individualDetailExplanation, symbol: "circle.dotted")
-                if supportsNaturalDetails && shownRecipe == nil && shownNaturalVariation == nil {
+                if store.allowsPlay && supportsNaturalDetails && shownRecipe == nil && shownNaturalVariation == nil {
                     VStack(alignment: .leading, spacing: 10) {
                         Text("Open Habitat & Arena to load your Journey's individual details.")
                             .font(.system(size: 12)).foregroundStyle(.secondary)
@@ -304,7 +364,9 @@ struct EvolutionWorkspace: View {
                         .disabled(helpChoice == nil || helpChoice == evolution.confirmedHelpStyle)
                         .accessibilityLabel("Confirm help style")
                 }
-                Text("Your confirmed role and help style guide the next answer. Tone and reply length are set in Personal rhythm. Individual body details come from the Journey's origin.")
+                Text(store.hasPersonalQiMon
+                     ? "Your confirmed role and help style guide the next answer. Tone and reply length are set in Personal rhythm. Body changes have their own explicit Keep choice."
+                     : "Your confirmed role and help style guide the next answer. Tone and reply length are set in Personal rhythm. Individual body details come from the Journey's origin.")
                     .font(.system(size: 11)).foregroundStyle(.secondary).lineSpacing(3)
             }
         }
@@ -328,7 +390,7 @@ struct EvolutionWorkspace: View {
                     VStack(alignment: .leading, spacing: 10) {
                         Button { evolution.preview(family) } label: {
                             CompanionPresenceArt(form: shownForm, family: family, size: 128, reduceMotion: true,
-                                treatment: store.preferences.visualTreatment)
+                                treatment: store.preferences.visualTreatment, equipment: store.preferences.equipment)
                                 .frame(maxWidth: .infinity).frame(height: 142)
                                 .background(Color(red: 0.09, green: 0.13, blue: 0.19), in: RoundedRectangle(cornerRadius: 16))
                         }.buttonStyle(.plain).accessibilityLabel("Preview \(family.title)")
@@ -353,14 +415,14 @@ struct EvolutionWorkspace: View {
     private var sharedWork: some View {
         WorkspaceCard {
             VStack(alignment: .leading, spacing: 14) {
-                sectionTitle("Shared work that helped", detail: "After a useful reply about a shared document, choose This helped my work. Your feedback counts once per request, even when both models reply.")
+                sectionTitle("Work that helped", detail: "After a useful local conversation or shared-document reply, choose This helped my work. Confirm a cited lesson separately when it helped. Feedback counts once per request.")
                 HStack {
                     Label("\(evolution.usefulReceipts.count) useful request\(evolution.usefulReceipts.count == 1 ? "" : "s") retained", systemImage: "checkmark.message")
                         .font(.system(size: 12, weight: .medium))
                     Spacer()
                     Button("Open assistant") { store.open(.assistant) }.buttonStyle(.borderless)
                 }
-                DisclosureGroup("Inspect usefulness records") {
+                DisclosureGroup("Inspect usefulness records", isExpanded: $usefulnessRecordsExpanded) {
                     VStack(alignment: .leading, spacing: 10) {
                         if evolution.usefulReceipts.isEmpty {
                             Text("No work has been marked useful yet.").font(.system(size: 12)).foregroundStyle(.secondary)
@@ -369,16 +431,34 @@ struct EvolutionWorkspace: View {
                             HStack {
                                 VStack(alignment: .leading, spacing: 3) {
                                     Text("Request \(receipt.requestID.uuidString.prefix(8))").font(.system(size: 11, design: .monospaced))
-                                    Text("Source fingerprint \(receipt.sourceDigest.prefix(12))").font(.system(size: 10)).foregroundStyle(.secondary)
+                                    Text(receipt.evidenceTitle).font(.system(size: 11)).foregroundStyle(.secondary)
+                                    if let source = receipt.sourceDigest {
+                                        Text("Source fingerprint \(source.prefix(12))").font(.system(size: 10)).foregroundStyle(.secondary)
+                                    }
+                                    if let binding = receipt.requestBinding {
+                                        Text("Input \(binding.inputDigest.prefix(12)) · context \(binding.contextDigest.prefix(12))")
+                                            .font(.system(size: 10)).foregroundStyle(.secondary)
+                                    }
+                                    if let use = receipt.lessonUse {
+                                        Text(store.lessonUseDescription(use))
+                                            .font(.system(size: 11)).foregroundStyle(.secondary)
+                                        Button("Withdraw lesson reference") {
+                                            evolution.withdrawLessonUse(requestID: receipt.requestID)
+                                        }
+                                        .buttonStyle(.borderless).font(.system(size: 11))
+                                        .accessibilityLabel("Withdraw lesson reference from request \(receipt.requestID.uuidString.prefix(8))")
+                                        .accessibilityIdentifier("evolution-withdraw-lesson-\(receipt.requestID.uuidString)")
+                                    }
                                 }
                                 Spacer()
                                 Button("Withdraw") { evolution.withdrawUseful(requestID: receipt.requestID) }.buttonStyle(.borderless)
                                     .accessibilityLabel("Withdraw request \(receipt.requestID.uuidString.prefix(8))")
+                                    .accessibilityIdentifier("evolution-withdraw-work-\(receipt.requestID.uuidString)")
                             }
                         }
                     }.padding(.top, 10)
                 }
-                Text("Inspect or withdraw these usefulness records whenever you like. Appearance choices are available independently.")
+                Text("A lesson reference records your feedback about one answer. Editing or withdrawing a lesson leaves this earlier feedback labeled as history; it never restores that lesson. You can withdraw the reference or the whole work record, then Save evolution.")
                     .font(.system(size: 11)).foregroundStyle(.secondary).lineSpacing(3)
             }
         }
@@ -439,14 +519,17 @@ struct EvolutionWorkspace: View {
     private var continuity: some View {
         WorkspaceCard {
             VStack(alignment: .leading, spacing: 14) {
-                sectionTitle("Keep your choices. Keep your history.", detail: "Appearance choices and retained records stay in this session until you save. Your documents and conversations stay in their existing places.")
+                sectionTitle("Keep your choices. Keep your history.", detail: store.hasPersonalQiMon
+                    ? "Your role, help style and development feedback stay in this session until you Save evolution. Kept lessons use their own save controls in Memory."
+                    : "Appearance choices and retained records stay in this session until you save. Your documents and conversations stay in their existing places.")
                 HStack(spacing: 10) {
                     Button("Save evolution", systemImage: "square.and.arrow.down") { evolution.save() }
                         .buttonStyle(.borderedProminent).accessibilityIdentifier("evolution-save")
                     Button("Load saved") { if evolution.hasUnsavedChanges { showLoad = true } else { evolution.load() } }.buttonStyle(.bordered)
                     Button("Forget…", role: .destructive) { showForget = true }.buttonStyle(.borderless)
                     Spacer()
-                    Text(evolution.hasUnsavedChanges ? "Unsaved changes" : "No unsaved changes").font(.system(size: 10)).foregroundStyle(.secondary)
+                    Text(evolution.requiresReplacement ? "Saved file needs review" : evolution.retentionState.title).font(.system(size: 10)).foregroundStyle(.secondary)
+                        .accessibilityIdentifier("evolution-retention-state")
                 }
                 if evolution.requiresReplacement {
                     Button("Replace saved evolution…", role: .destructive) { showReplace = true }.buttonStyle(.bordered)
@@ -472,7 +555,9 @@ struct EvolutionWorkspace: View {
                         }.padding(.top, 8)
                     }
                 }
-                Text("Return to your starter whenever you like. The history of forms you kept remains available here.")
+                Text(store.hasPersonalQiMon
+                     ? "Save and Load retain KIN’s chosen body and its learning reference for this individual. His identity, lessons and existing Journey keep their own storage."
+                     : "Return to your starter whenever you like. The history of forms you kept remains available here.")
                     .font(.system(size: 11)).foregroundStyle(.secondary)
             }
         }

@@ -1,47 +1,30 @@
-# ARCHi + QiMon — v0.7.0-alpha.1
+# Development source update after v0.7.0-alpha.1
 
-**Source Alpha:** native macOS companion, Habitat and QiMon practice battles. Build locally with the instructions below; no notarized installer or model weights are included.
+14 September 2026 · source package version remains **0.7.0** · no new release tag is assigned by this preparation.
 
-## Included
+**Source Alpha, not Beta.** Fresh native compilation and the exported default full Swift suite passed: XCTest reported 594 cases including 31 skipped, with zero failures. Swift Testing separately reported 234 tests in 28 suites passed, with installedWorkerPublicPreflightReachesNativeOwner explicitly skipped. Do not combine these into an aggregate pass count. Retained TypeScript checks also passed; Unity build/runtime checks were not rerun against the exported copy. See [validation](docs/ALPHA_VALIDATION.md) for scope.
 
-- Native SwiftPM macOS companion and workspace, with one appearance path shared by desktop, Assistant, Habitat and QiMon Arena.
-- Default local Qwen assistance through Ollama, optional Codex, and deliberate independent Compare. Confirmed reply preferences are captured per request; cancellation and source freshness are checked before results are used.
-- Explicit local lessons with inspect, revise, withdraw and export; optional bounded session context remains separate and local.
-- Work together: exact selected-passage revision proposals, Before/After review, checked Apply, one-step Undo and separate UTF-8 draft export.
-- Bundled Habitat, care, exploration, Relay and the deterministic QiMon practice battle engine. Native controls submit legal actions to the existing battle reducer; eligible completed practice outcomes require explicit replay-checked Keep.
-- Natural individual details for the Companion/Pearl and supported Lumen appearance, derived from the existing Journey origin. No work, role or battle quota unlocks these details. Optional larger forms are explicit appearance choices; experience history remains independently inspectable.
-- Evolution save v4, with valid v1/v2/v3 history and earlier appearance recipes retained. Save and Load are explicit.
-- Unexported-draft checks for normal Quit, Change document and Stop sharing. The build script refuses to replace a running selected app profile rather than terminating it.
-- Experimental Reactor local preview and bounded API-trial wiring, with local artwork fallback. Blender and Unity remain optional authoring/validation tools.
-- Approved Hampton Designed product policy for creator endorsement, distinctive appearances and balanced signature abilities. This policy is included as documentation; creator issuance, verification, editions and transfer are not implemented features.
+A separate exported focused run passed 76 checks (57 XCTest and 19 Swift Testing) with zero failures/skips, including the read deadline and opted-in native UI/full-workspace fixtures. This remains fixture and source evidence, not general third-party-app, accessibility or ordinary-use acceptance.
 
-## Build
+The exported native stage build passed plist validation, ad-hoc signing and deep/strict signature verification. It staged a separate candidate without launch or installation and preserved the installed/open app. No notarized distribution is claimed.
 
-```sh
-npm ci
-./script/build_and_run.sh --verify --review
-```
+The [September 7 Alpha](https://github.com/cr8ph8/ARCHi/releases/tag/v0.7.0-alpha.1) remains at its original commit. This working update promotes later native desktop, KIN, evidence and Unity source into the clean public history. It does not replace the earlier tag or announce a notarized installer.
 
-Requirements: macOS 14+, Swift 6 with the macOS SDK, and Node.js 24+ with npm. The script prints the path of the generated, locally signed Development Review app. The initial target is supervised testing on an Apple Silicon Mac; this is not a notarized installer, portable Reactor runtime or automatic update mechanism.
+## Included in the update
 
-The battle/shared-engine source tests are available through `npm test`. Default native verification runs with the command above. See [the recorded validation scope](docs/ALPHA_VALIDATION.md) for checks and remaining qualification. A successful source build on this Mac is not fresh-Mac acceptance.
+- Native desktop assistance, local-first routing, conversation/composer controls, user-started dictation, request evidence and separate Compare lanes.
+- Work together's object-of-interest flow: point KIN's Seed at a window, inspect its mint outline, explicitly Read a local Accessibility/OCR text snapshot, Review it, then Use the existing selection/revision/Apply/Undo/export controls. Hover invokes no model. The external app remains unchanged; Codex/Compare needs an allowance for the exact captured copy. This is text capture, not image semantics or camera access.
+- Explicit lesson-use feedback, profile recovery/retention controls and late-callback/source-freshness protections through the existing native owners.
+- KIN Core Seed/body presentation, existing teal/light appearances, Focus Staff equipment and bounded user-controllable cues. No duplicate companion save or creator entitlement is introduced.
+- Native Node Lab for inspecting source, lessons, temporary context and provider-scoped work receipts. It is a read-only projection with navigation to existing controls.
+- Separate Unity 6000.5.4f1 UI Toolkit companion/items/Relay preview, bundled source artwork, baked text settings, build helper and explicit programmatic runtime smoke runner. It remains disconnected from saved native KIN and assistance.
+- Retained TypeScript Journey, Habitat and battle source, including battle readback and tests. Current native desktop packaging leaves Habitat/Arena disabled and unbundled.
+- Current source tests and public build instructions. Tests are included as reproducible routes; their presence is not proof that this exported revision passed them.
 
-## Known limitations
+## Preparation and limits
 
-- Saved preferences and lessons load at startup; saved Evolution requires **Load saved**. Working copy, Undo, replies and temporary context are session-only. Export draft edits before leaving.
-- Journey export omits native preferences, lessons and Evolution. Complete combined backup/restore remains unqualified.
-- Initial handoff ordering/retry was repaired and focused native checks pass. Offscreen image bytes still vary slightly while geometry and alpha remain exact; bounded pixel checks pass. Broader startup and rendering qualification remains open.
-- Full accessibility, resource budgets, sleep/wake, multiple displays, ordinary-day usefulness and another-Mac installation remain open.
-- Qwen requires an already installed supported local model. Codex depends on the expected signed-in app/runtime installation. Connecting is separate from sending content.
-- Live Reactor generation, likeness and provider closure remain unverified in the recorded local integration. A paid trial is optional and separately reviewed.
-- Current natural variation does not establish learned biological growth, human mastery, a full Hampton/ARC learning system, transferable ownership or financial value.
+The clean export excludes private research, conversations, profile records, credentials, editable art originals, caches and installed tool/model runtimes. PNG File text metadata is removed only in exported copies, with pixel data unchanged and public digest pins updated. MIT, attribution and dependency notices remain separate from authenticated creator endorsement.
 
-## Not yet included
+See [validation](docs/ALPHA_VALIDATION.md) for the status of this prepared copy and the earlier tag's historical checks. The native/Unity handoff, full 3D embodiment, ordinary-day usefulness, long-session performance, complete accessibility, another-Mac installation and verified marketplace services remain open. No new provider result, model training, ownership proof or game-balance certification is implied.
 
-Mobile/AR, native voice, external-application edits, full 3D runtime integration, trained teacher/student or expert routing, persistent collectible editions/trading and an active verified-creator registry.
-
-**Hampton Designed / UID:** creator endorsement is separate from MIT code permission. Current local IDs support continuity; they do not authenticate authorship, ownership, scarcity, price or sale. Future signature abilities must use the same gameplay power budget, with explicit tradeoffs and no paid automatic win. Private assistant memories are excluded from transferable character records. See the approved [product policy](docs/HAMPTON_DESIGNED.md); verified provenance, editions, authentication and ownership remain future capabilities.
-
-## License
-
-The included project-authored code, documentation and runtime artwork use [MIT](LICENSE), with [asset attribution](ASSET_ATTRIBUTION.md) and [third-party notices](THIRD_PARTY_NOTICES.md). Hampton Designed describes endorsement and future balanced specialties; it does not restrict MIT permissions.
+Build instructions and retention boundaries are in [README](README.md). Private assistant memories and shared work remain outside transferable character records.

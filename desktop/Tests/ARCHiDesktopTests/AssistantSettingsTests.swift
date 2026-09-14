@@ -7,7 +7,7 @@ final class AssistantSettingsTests: XCTestCase {
         let request = AssistantRequest(prompt: "Explain the next step", sourceName: nil, sourceText: "",
             sourceRevision: 0, placementRevision: 4, tone: "Calm", replyLength: 0.35)
         let input = try decode(request)
-        XCTAssertEqual(AssistantRequest.inputContract, "native-assistant-input/v3")
+        XCTAssertEqual(AssistantRequest.inputContract, "native-assistant-input/v4")
         XCTAssertEqual(input["question"], .string("Explain the next step"))
         XCTAssertEqual(input["task"], .string("answer"))
         XCTAssertNil(input["revisionTarget"])

@@ -1,101 +1,91 @@
-# ARCHi · desktop companion Alpha
+# ARCHi · desktop companion
 
-ARCHi is a local-first personal companion: a movable desktop presence, useful text assistance, a place to learn what you explicitly teach, and a shared Habitat with QiMon practice battles. The same individual and selected appearance continue between work and play.
+ARCHi is a local-first macOS companion with text assistance, explicitly kept lessons, a shared document workspace and one continuing KIN. The native app owns assistance, memory, permissions and saved companion development. A separate Unity companion/play preview explores the same design with local presentation and practice interactions.
 
-**Status: Alpha source candidate for `cr8ph8/ARCHi`, planned tag `v0.7.0-alpha.1`.** This is an early macOS application for supervised local testing. Candidate verification, repository publication, the tag and any downloadable app assets must be confirmed separately; this document is not a release receipt. The current build produces a locally signed development app, not a notarized installer.
+**Source Alpha update · package version 0.7.0.** The earlier [September 7 source Alpha](https://github.com/cr8ph8/ARCHi/releases/tag/v0.7.0-alpha.1) remains available at its original tag. This update has separate exported-source checks and is not a Beta release. See [validation and remaining work](docs/ALPHA_VALIDATION.md). No notarized installer, model weights, marketplace or release date is included.
 
-![Synthetic render of the continuing ARCHi individual and optional forms](docs/images/individual-forms.png)
+The exported source passed retained TypeScript checks and fresh native compilation. The full native run reported **594 XCTest cases, including 31 skipped, with zero failures**; Swift Testing separately reported **234 tests in 28 suites passed**, with the installed-worker public preflight explicitly skipped. These reporting systems are not added into one pass total. A separate focused selection passed **76 checks with zero failures/skips**, including native UI fixtures. The exported native candidate passed plist and local signature verification without installation or launch. The Unity build/runtime was not rerun from this export, and native ordinary-use acceptance remains separate.
 
-## What is included
+## Current source
 
-- **Native desktop app:** SwiftUI/AppKit workspace, floating companion, local placement, activity cues, keyboard controls and reduced-motion options.
-- **Personal assistance:** local Qwen through Ollama by default; independent optional Codex and deliberate Compare routes. Send captures your current instructions and confirmed help preferences. Stop retires the owned request.
-- **Teaching:** explicitly kept, inspectable and withdrawable lessons. Matching lessons are supplied only to local Qwen; the current matcher uses topic phrases, source scope and expiry.
-- **Work together:** share a UTF-8 text copy, select an exact passage, ask for an explanation or revision, inspect Before/After, Apply, Undo once and export a separate draft. The imported original is preserved.
-- **Habitat and play:** care, exploration, the Relay activity, local practice battles and versioned Journey history run inside the native app's retained WebKit host. You do not need to open a browser or start a separate development server.
-- **Individual appearance:** the familiar Companion/Pearl and supported Lumen study receive small, repeatable variations from the existing Journey origin. Role choices, work counts and battles are not appearance quotas. Larger form changes are explicit choices; they do not rewrite life history or prove learned development.
-- **Optional expression:** a local Reactor preview and a separately reviewed, bounded API-trial path. Local artwork remains the fallback. Blender and Unity are authoring/validation tools, not required application runtimes.
+| Surface | Included behavior and boundary |
+| --- | --- |
+| Native desktop | SwiftUI/AppKit workspace, floating KIN, placement controls, appearance, local Focus Staff cues, quiet and reduced motion. |
+| Assistance | Local Qwen through an existing Ollama installation, optional Codex, and deliberate Compare with separate provider lanes. Stop retires the owned request. |
+| Work together | Point KIN at a window, explicitly read and review a local text snapshot, then use the existing selection/explanation/revision/Apply/Undo/export flow. File import also remains available. The original app and imported original are preserved. |
+| Memory and evidence | Explicit Keep/revise/withdraw controls, current source/context binding, local receipts and a native Node Lab for inspecting recorded relationships. Reading the graph makes no model call and creates no graph database. |
+| Dictation | User-started on-device speech input, when supported and permitted, prepares a draft for review before Send. It is not continuous listening. |
+| KIN | Core Seed and supported body presentation belong to the same individual. Appearance, learned-use records, placement and authority keep their existing owners. A local UID does not authenticate a creator or prove ownership. |
+| Unity preview | Separate UI Toolkit companion/items/Relay window using bundled KIN artwork. Explicitly disconnected from saved KIN; staff, body selection and cues are session previews. No assistant client, memory store or entitlement service is added. |
+| Retained game source | TypeScript Habitat, Journey, Relay and deterministic QiMon practice battles remain available as source and tests. The current native desktop build does not bundle or launch Habitat/Arena. |
 
-## QiMon practice battles
+The [architecture](docs/ARCHITECTURE.md) identifies the existing owners and boundaries. [Node Lab](docs/NODE_LAB.md) explains the inspection surface. The Unity preview's Seed badge is a stationary reference, not an implemented following cursor or 3D rig.
 
-The included TypeScript battle engine resolves simultaneous commands deterministically. Teams contain one to three participants and share fixed starting resources. The available actions are Pulse, Guard, Signature, Swap and Surrender; role-specific abilities belong to the battle rules. A local practice partner chooses from public state before the player seals a command. Same-device two-player play is also retained.
+## Build the native desktop app
 
-Native controls submit legal, revision-bound actions to that same engine. A completed eligible partner encounter can be explicitly kept after replay validation and deduplication. Temporary encounters and larger appearance changes do not create collectible ownership, new permissions or a trained assistant capability.
+Native build requirements are macOS 14 or later and a Swift 6 toolchain with the macOS SDK. From the repository root:
 
-The reusable source is in [the battle engine](src/battle-engine.ts), [practice history](src/model.ts), and [the native host bridge](src/desktop-host.ts). There is no separate Unity battle runtime in this Alpha.
+    ./script/build_and_run.sh --verify --review --stage-only
 
-## Build and open locally
+This compiles and tests native source, constructs and locally signs a Development Review candidate, and prints its path. The stage-only flag stages a separate candidate without installing or launching it. The current native build does not require the retained TypeScript assets. Quit a selected app normally before replacing its generated bundle; the build script checks for running copies and preserves the existing bundle during promotion.
 
-Initial qualification focuses on an Apple Silicon Mac. Building requires:
+For package-only checks:
 
-- macOS 14 or later and a Swift 6 toolchain with the macOS SDK;
-- Node.js 24 or later and npm for the bundled TypeScript assets;
-- the checked-in source and lockfile.
+    swift build --package-path desktop
+    swift test --package-path desktop
 
-From the repository root:
+Some integration tests require explicit opt-ins or external prerequisites. A skipped test is not a pass. Building or staging an app does not verify ordinary use, full accessibility, signing for distribution or installation on another Mac.
 
-```sh
-npm ci
-./script/build_and_run.sh --verify --review
-```
+To check the retained TypeScript source separately, use Node.js 24 or later and npm:
 
-The script typechecks and bundles Habitat, builds Swift, runs the default native test suite, signs the development bundle and requests launch. It prints the generated app's absolute path. It refuses to replace a running selected profile: export any working draft, save wanted choices and quit that app normally, then rerun. Keep it closed during compilation.
+    npm ci
+    npm run check
 
-`--review` selects **ARCHi Development Review**, with separate native saves and Habitat storage from the ordinary Preview. Omitting `--review` selects the ordinary **ARCHi Desktop Preview** instead. The bundle is staged in the operating system's temporary directory and may need rebuilding if that directory is cleared. Do not rebuild merely to reopen an existing candidate.
+The public package commands operate on the included source. Private development research and accountability records are not build dependencies.
 
-The separate shared-engine test command is:
+The [source-check workflow template](docs/source-checks.yml.example) verifies the complete checksum manifest and retained TypeScript on Linux, then compiles Swift and runs selected deterministic domain tests on macOS. It uses official actions pinned to commits, read-only repository permissions, no artifact upload and no live providers or native visual tests. It is not enabled: the publishing credential lacks GitHub workflow permission. A maintainer with that permission can place this template at `.github/workflows/source-checks.yml` in a later commit, refresh the source checksums, and run it. Local validation results are recorded separately.
 
-```sh
-npm test
-```
+## Try the Unity companion/play source
 
-These commands describe available verification paths. Their presence does not imply that this checkout, your Mac or every opt-in integration test has passed.
+The Unity project is in [unity/ARCHi](unity/ARCHi). It is pinned to Unity **6000.5.4f1**, with the Built-in Render Pipeline and Mac standalone module. Its [guide](unity/ARCHi/README.md) covers the startup scene, required baked text settings, build helper and explicit runtime smoke mode.
+
+The preview displays **“Port preview · not connected to saved companion.”** Native assistance and memory remain in ARCHi. Previewing First Light does not grant evolution; equipping the bundled Focus Staff is temporary. The Relay practice rules are local and do not award retained progress. This source includes the separate preview, not a completed native/Unity handoff or full battle-engine port.
+
+## Point at an object of interest
+
+1. Choose **Point at a window** and move KIN's Seed over the window you want to use. A mint outline marks the current window. Hovering and choosing use window metadata; they do not read its contents or invoke a model.
+2. Choose **Read this window**. ARCHi makes a local text snapshot through macOS Accessibility text or, when needed and permitted, OCR of that selected window. This is an explicit bounded read, not background monitoring. A moved, closed, changed or unavailable target must be selected again; failed or timed-out reads do not replace the current working copy.
+3. Review the captured text and its source, then choose **Use in Work together**. The snapshot becomes a text copy in the existing document workspace. It does not keep following the external window.
+4. Select the passage you want to discuss and use the existing explanation or revision controls. Review a proposed edit before Apply; Undo and separate draft export operate on the local working copy. The external app is not edited.
+
+Local Qwen is the default route for the captured copy. Codex or Compare requires a separate allowance for that exact copy before Send; changing the copy invalidates that allowance. Hover, Read, Review and Use do not themselves send a question or keep a memory. OCR reads text; it does not provide image understanding, visual reasoning or camera access. Captured images are neither saved nor sent.
 
 ## Connect assistance
 
-Start the installed local Ollama service and use **Connections → Qwen → Connect**. The supported model names are `qwen3.5:9b` and `qwen3:8b`; a selected model must already be installed. ARCHi does not download models or fall back to a hosted provider automatically. If neither is installed, local character and play features remain available.
+ARCHi does not download models. For Qwen, run an existing local Ollama service with a supported installed model (qwen3.5:9b or qwen3:8b), then use the app's connection controls. Connecting is separate from sending your draft. Automatic local-first routing, explicit provider selection and Compare retain their own connection and request state.
 
-Connect checks availability without submitting the draft. Send shares the current question, the full deliberately shared document copy and its selected passage with the selected route. A short selection does not remove the rest of that shared copy from the request. Oversized input is rejected instead of silently truncated.
+Send can include the deliberately shared document copy and selected passage, as disclosed by the selected route. Selecting a short passage does not by itself remove the rest of that shared copy from the request. Oversized input is rejected rather than silently truncated. Stop, source changes and request ownership prevent stale callbacks from becoming current results.
 
-Codex is optional and uses an existing signed-in Codex/ChatGPT runtime in the installation layout expected by the adapter. Other installation layouts may need an adapter change. Compare requires both connections and keeps the replies separate; neither model teaches or trains the other automatically. Kept local lessons and temporary local excerpts are not forwarded to Codex.
+Codex is optional and requires a compatible existing signed-in Codex runtime. Kept local lessons and private temporary context are not forwarded to the external Compare lane. Neither provider automatically teaches or trains the other. Receipts distinguish offered, dispatched and cited references; a successful model call does not establish a correct or useful answer.
 
-Reactor's local preview, public readiness check and paid live trial are separate actions. An account key and explicit review are required for a live trial. Live generated likeness and provider shutdown remain qualification work. Its optional Python/SDK setup is not a portable end-user package yet; assistance and play do not depend on it.
+Optional Reactor expression is separate from core assistance and uses local artwork as its fallback. Its SDK runtime, accounts and models are not included; any live provider path retains its separate setup and controls.
 
-## Save before leaving
+## Keep control of local records
 
-| Data | Current retention behavior |
-|---|---|
-| Appearance and reply rhythm | Save choices explicitly; saved preferences load at startup. |
-| Kept lessons | Explicit Keep/revise/withdraw writes the existing settings file; saved lessons load at startup. |
-| Evolution and later appearance choices | **Save evolution** and **Load saved** are both explicit. A new launch does not automatically load Evolution. Valid legacy v1–v3 saves remain supported by v4. |
-| Journey | Existing local history storage and explicit outcome Keep remain authoritative. Continuity can export and review a separate Journey copy. |
-| Working document and Undo | Session-only. Export a separate draft to retain edits across quit; one-step Undo is not saved. |
-| Replies, drafts and temporary context | Session-only; no durable conversation archive is provided by this flow. |
+- Save wanted appearance and reply choices explicitly. Explicitly kept lessons can be inspected, revised and withdrawn.
+- Evolution Save/Load and reviewed development records use the existing native owner. Saving one type of record does not implicitly save every draft or document.
+- Working documents, Undo, conversation state, graph presentation and temporary context have session boundaries. Export wanted draft edits before quitting.
+- Recovery controls operate on the existing native profile. The separate retained game Journey is not a complete backup of native preferences, lessons and Evolution.
+- Unity preview actions do not write a native profile, saved development, private memory or ownership record.
 
-A Journey export is not a complete companion backup: native preferences, lessons and Evolution are separate. Preserve the relevant files and exports before restore experiments. The app warns before discarding an unexported working copy through normal Quit, Change document or Stop sharing; that does not replace backup or protect against process termination or a machine failure.
+Keep unreadable saves for recovery rather than deleting them to dismiss an error. Full combined recovery, ordinary-day usefulness, sleep/wake, multiple displays, VoiceOver traversal, resource budgets and another-Mac installation remain qualification work.
 
-## Alpha limits and recovery
+## Hampton Designed and license
 
-- Earlier development checks exposed an initial Habitat handoff timeout. Readiness ordering and bounded latest-request retry were repaired and passed focused native checks; broader startup reliability remains qualification work. Use the native Retry control. A reserved-port error usually means another copy of the same profile is open; close that copy normally before retrying.
-- Offscreen PNG bytes can differ slightly between render orders. The checked images retain exact dimensions and alpha and pass a bounded pixel comparison; this Alpha does not promise deterministic image bytes.
-- Local model latency, sleep/wake, multiple displays, full VoiceOver traversal, storage failure, complete restore and installation on another Mac are not fully qualified.
-- A file can fit the document viewer's import limit and still exceed the smaller model-request budget. Use a shorter separate text document when needed.
-- If Qwen is unavailable, start Ollama or select an installed supported model, then Connect again. After Stop, timeout or source invalidation, reconnect and select the current passage before resending.
-- Recover a hidden companion from the menu-bar sparkles icon or **Window → Show companion**. Closing the workspace leaves the app running; Quit ends it.
-- Preserve unreadable saves and report the error. Do not use Delete, Forget or Replace merely to dismiss a recovery problem.
+**[MIT](LICENSE)** applies to the included project-authored code, documentation and runtime artwork. [Asset attribution](ASSET_ATTRIBUTION.md) and [third-party notices](THIRD_PARTY_NOTICES.md) identify their scope. External packages, SDKs, models and tools retain their own terms.
 
-Mobile, camera/AR, native voice, external-application editing, model training, a full ARC solver, persistent collectible trading and a complete 3D character runtime are later work. Structured output validation checks the accepted contract; it is not a guarantee of factual accuracy or human benefit.
+The [Hampton Designed policy](docs/HAMPTON_DESIGNED.md) describes explicit creator endorsement, distinctive appearance and balanced signature abilities. It adds no restrictions to MIT permission. Copying a badge, hash or local UID does not authenticate authorship, scarcity or ownership. Signing, editions, verified entitlements, settlement and trading remain future work. Private assistant memories and shared work are not merchandise or transferable character records.
 
-## Hampton Designed, identity and future specialties
+For an issue, include the source commit, macOS or Unity version, expected behavior and a minimal synthetic reproduction. Do not include credentials, private documents, lessons or profile files. Describe each relevant check as passed, failed, skipped or not tried.
 
-**Hampton Designed is an approved product direction; its verification service and creator editions are future work.** The creator seal is intended to identify an explicitly endorsed design, distinctive appearance and versioned signature abilities. Those abilities must stay within the same gameplay power budget, with meaningful costs, tradeoffs and counterplay. The seal, rarity or payment must never provide an automatic win.
-
-The current Journey ID and origin digest support local continuity and reproducible presentation. A UID does not authenticate its own creator, prove exclusive ownership, enforce edition scarcity, assign a price or establish a valid sale. Future issuer provenance, edition records and ownership records require separate verification. Private assistant memories and shared work are excluded from transferable character records.
-
-The [Hampton Designed policy](docs/HAMPTON_DESIGNED.md) describes this direction and its acceptance criteria. MIT permission to use or modify the code is separate from official creator endorsement. No marketplace, NFT issuance, signed creator registry or ownership authentication is implemented in this Alpha.
-
-## Feedback and license
-
-For a reproducible issue, include the candidate's commit/build identifier, macOS version, route/model when relevant, expected behavior and minimal nonprivate reproduction steps. Report pass, fail or not tried rather than assuming an untested path works. Exclude document contents, private lessons, credentials and account details unless they are deliberately replaced by a synthetic fixture.
-
-**License: [MIT](LICENSE)** for the included project-authored source, documentation and runtime artwork. See [asset attribution](ASSET_ATTRIBUTION.md) and [third-party notices](THIRD_PARTY_NOTICES.md). The Hampton Designed policy adds no restrictions to MIT permissions and does not make a fork an authenticated creator edition. External models, SDKs and tools retain their own terms.
+See [contributing](CONTRIBUTING.md) for ownership boundaries, local checks and the distinction between MIT contributions and creator endorsement.

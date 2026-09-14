@@ -5,6 +5,44 @@ import Testing
 @Suite(.serialized)
 @MainActor
 struct QwenAssistantTests {
+    @Test func directQwenIncludesExactLocalConversationWithOneGenerationAndExplicitPrecedence() async throws {
+        let client = makeClient()
+        defer { client.disconnect() }
+        let history = [AssistantConversationExchange(question: "  Earlier \"quoted\" request.\n", answer: "Generated e\u{301} and 🙂.")]
+        let request = sourceRequest().replacingLocalConversation(history)
+        try await client.connect()
+        try await client.reply(to: request, onEvent: { _ in })
+        let chats = QwenFixtureProtocol.state.requests.filter { $0.url?.path == "/api/chat" }
+        #expect(chats.count == 1)
+        let body = try JSONDecoder().decode(JSONValue.self, from: #require(chats.first?.httpBody))
+        let system = try #require(body["messages"]?.array?.first?["content"]?.string)
+        #expect(system.contains(LocalConversationGuidance.text))
+        let content = try #require(body["messages"]?.array?.last?["content"]?.string)
+        let input = try JSONDecoder().decode(JSONValue.self, from: Data(content.utf8))
+        #expect(input["question"]?.string == request.prompt)
+        #expect(input["localConversation"] == AssistantConversation.modelInput(for: history))
+        #expect(input["localConversation"]?["exchanges"]?.array?.first?["question"]?.string?.utf8.elementsEqual(history[0].question.utf8) == true)
+        #expect(input["localConversation"]?["exchanges"]?.array?.first?["answer"]?.string?.utf8.elementsEqual(history[0].answer.utf8) == true)
+        #expect(input["memories"] == nil)
+        #expect(body["tools"] == nil)
+    }
+
+    @Test func directQwenRejectsOversizedHistoryAndCountsValidHistoryInWireBudget() async throws {
+        let client = makeClient()
+        defer { client.disconnect() }
+        try await client.connect()
+        let malformed = sourceRequest().replacingLocalConversation(Array(repeating: .init(question: "q", answer: "a"), count: 4))
+        await #expect(throws: QwenFailure.invalidResponse) { try await client.reply(to: malformed, onEvent: { _ in }) }
+        let large = AssistantRequest(prompt: "Use this source.", sourceName: "fixture.txt",
+            sourceText: String(repeating: "x", count: 17_000), sourceRevision: 4, placementRevision: 7,
+            tone: "Warm", replyLength: 0.25,
+            localConversation: [.init(question: "earlier", answer: String(repeating: "z", count: 7_000))])
+        #expect(large.hasValidLocalConversation)
+        await #expect(throws: QwenFailure.contextLimit) { try await client.reply(to: large, onEvent: { _ in }) }
+        #expect(!QwenFixtureProtocol.state.requests.contains { $0.url?.path == "/api/chat" })
+        #expect(QwenFixtureProtocol.state.requests.count == 2, "Both failures precede transport re-verification/generation")
+    }
+
     private func revisionRequest() throws -> AssistantRequest {
         let source = sourceRequest(), selection = try #require(source.selection)
         return AssistantRequest(prompt: "Make this option more concise.", sourceName: source.sourceName,
@@ -224,6 +262,110 @@ struct QwenAssistantTests {
 }
 
 struct QwenReplyStreamTests {
+    @Test func metricsComeOnlyFromTheAcceptedTerminalEvent() throws {
+        var stream = QwenReplyStream(model: "qwen3.5:9b")
+        var early = QwenFixtureProtocol.chunk("Answer", done: false).object!
+        early["prompt_eval_count"] = .number(999)
+        early["eval_count"] = .number(-1)
+        _ = try stream.consume(JSONEncoder().encode(JSONValue.object(early)))
+        #expect(stream.metrics == nil)
+        #expect(throws: QwenFailure.invalidResponse) { try stream.finish() }
+        #expect(stream.metrics == nil)
+
+        var terminal = QwenFixtureProtocol.chunk("", done: true).object!
+        terminal["prompt_eval_count"] = .number(123)
+        terminal["eval_count"] = .number(17)
+        terminal["total_duration"] = .number(10_000_000)
+        terminal["load_duration"] = .number(0)
+        terminal["prompt_eval_duration"] = .number(2_000_000)
+        terminal["eval_duration"] = .number(8_000_000)
+        _ = try stream.consume(JSONEncoder().encode(JSONValue.object(terminal)))
+        try stream.finish()
+        #expect(stream.text == "Answer")
+        #expect(stream.metrics == LocalInferenceMetrics(inputTokens: 123, outputTokens: 17,
+            totalNanoseconds: 10_000_000, loadNanoseconds: 0,
+            promptEvaluationNanoseconds: 2_000_000, evaluationNanoseconds: 8_000_000))
+    }
+
+    @Test func missingAndNullMetricsStayUnknownWhileZeroIsKnown() throws {
+        var missing = QwenReplyStream(model: "qwen3.5:9b")
+        _ = try missing.consume(JSONEncoder().encode(QwenFixtureProtocol.chunk("Answer", done: true)))
+        try missing.finish()
+        #expect(missing.metrics == nil)
+
+        var terminal = QwenFixtureProtocol.chunk("Answer", done: true).object!
+        terminal["prompt_eval_count"] = .null
+        terminal["eval_count"] = .null
+        var nulls = QwenReplyStream(model: "qwen3.5:9b")
+        _ = try nulls.consume(JSONEncoder().encode(JSONValue.object(terminal)))
+        try nulls.finish()
+        #expect(nulls.metrics == nil)
+
+        terminal["eval_count"] = .number(0)
+        var zero = QwenReplyStream(model: "qwen3.5:9b")
+        _ = try zero.consume(JSONEncoder().encode(JSONValue.object(terminal)))
+        try zero.finish()
+        #expect(zero.metrics == LocalInferenceMetrics(outputTokens: 0))
+    }
+
+    @Test func malformedOptionalMetricsNeverRejectAnOtherwiseValidAnswer() throws {
+        // Raw literals include an overflowing JSON number, which cannot first be
+        // represented as JSONValue.number without losing the malformed input.
+        for literal in ["-1", "1.5", "\"12\"", "true", "[]", "{}",
+                        "9007199254740992", "9223372036854775808", "1e309"] {
+            let wire = """
+            {"model":"qwen3.5:9b","message":{"role":"assistant","content":"Answer"},"done":true,"done_reason":"stop","prompt_eval_count":12,"eval_count":\(literal)}
+            """
+            var stream = QwenReplyStream(model: "qwen3.5:9b")
+            _ = try stream.consume(Data(wire.utf8))
+            try stream.finish()
+            #expect(stream.text == "Answer")
+            #expect(stream.metrics == LocalInferenceMetrics(inputTokens: 12, malformedFields: ["eval_count"]))
+        }
+    }
+
+    @Test func metricIntegerBoundaryDoesNotRoundThroughDouble() throws {
+        for literal in ["9007199254740991", "9007199254740991.5", "9007199254740990.5",
+                        "0.00000000000000000000000000000000000000000000001", "12.0", "12e0"] {
+            let wire = """
+            {"model":"qwen3.5:9b","message":{"role":"assistant","content":"Answer"},"done":true,"done_reason":"stop","total_duration":\(literal)}
+            """
+            var stream = QwenReplyStream(model: "qwen3.5:9b")
+            _ = try stream.consume(Data(wire.utf8))
+            try stream.finish()
+            if literal == "9007199254740991" {
+                #expect(stream.metrics?.totalNanoseconds == 9_007_199_254_740_991)
+                #expect(stream.metrics?.malformedFields.isEmpty == true)
+            } else {
+                #expect(stream.metrics?.totalNanoseconds == nil)
+                #expect(stream.metrics?.malformedFields == ["total_duration"])
+            }
+        }
+    }
+
+    @Test func metricLiteralsUseTopLevelDecodedKeysAndRejectDuplicateAccounting() throws {
+        let wire = #"{"model":"qwen3.5:9b","message":{"role":"assistant","content":"Quoted \"eval_count\":999 and } remain text","eval_count":999},"done":true,"done_reason":"stop","ignored":{"eval_count":888},"eval_\u0063ount":7,"prompt_eval_count":4,"prompt_eval_count":5}"#
+        var stream = QwenReplyStream(model: "qwen3.5:9b")
+        _ = try stream.consume(Data(wire.utf8))
+        try stream.finish()
+        #expect(stream.metrics == LocalInferenceMetrics(outputTokens: 7, malformedFields: ["prompt_eval_count"]))
+        #expect(stream.text == "Quoted \"eval_count\":999 and } remain text")
+    }
+
+    @Test func rejectedTerminalCannotPublishMetrics() throws {
+        for reason in ["length", "unknown"] {
+            var terminal = QwenFixtureProtocol.chunk("Answer", done: true).object!
+            terminal["done_reason"] = .string(reason)
+            terminal["eval_count"] = .number(8)
+            var stream = QwenReplyStream(model: "qwen3.5:9b")
+            #expect(throws: QwenFailure.outputLimit) {
+                try stream.consume(JSONEncoder().encode(JSONValue.object(terminal)))
+            }
+            #expect(stream.metrics == nil)
+            #expect(!stream.done)
+        }
+    }
+
     @Test func rejectsToolsThinkingRemoteRoutingWrongModelAndPostTerminalEvents() throws {
         for mutation in ["tool_calls", "thinking", "remote_host", "model", "role"] {
             var value = QwenFixtureProtocol.chunk("Visible", done: false)

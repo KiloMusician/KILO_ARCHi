@@ -16,6 +16,9 @@ struct ARCHiDesktopMain {
         if CommandLine.arguments.contains("--routing-smoke") {
             exit(await AssistantRoutingDiagnostics.run() ? 0 : 1)
         }
+        if CommandLine.arguments.contains("--automatic-assistant-smoke") {
+            exit(await AutomaticAssistantDiagnostics.run() ? 0 : 1)
+        }
         if CommandLine.arguments.contains("--hampton-context-smoke") || CommandLine.arguments.contains("--hampton-cancel-smoke") {
             let passed = await HamptonDiagnostics.run(cancel: CommandLine.arguments.contains("--hampton-cancel-smoke"))
             exit(passed ? 0 : 1)
@@ -59,30 +62,39 @@ final class DesktopDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if Bundle.main.bundleIdentifier == "com.quotient.archi.desktop.review" {
             let reviewPreferences = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
                 .appendingPathComponent("ARCHiDesktopReview/preferences.json")
-            return CompanionStore(preferenceURL: reviewPreferences)
+            return CompanionStore(preferenceURL: reviewPreferences, allowsPlay: false)
         }
-        return CompanionStore()
+        return CompanionStore(allowsPlay: false)
     }()
     private var companion: CompanionPanelController?
     private var workspace: NSWindow?
     private var statusItem: NSStatusItem?
     private var reactorControl: ReactorControlServer?
+    private var harmony: CompanionHarmonyPlayer?
     private var expressionObservers: [NSObjectProtocol] = []
+    private var isReviewingQuit = false
+    private var terminationInProgress = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         configureMenus()
         let panel = CompanionPanelController(store: store)
         companion = panel
+        harmony = CompanionHarmonyPlayer(store: store)
         store.onShowCompanion = { [weak panel] in panel?.show() }
         store.onHideCompanion = { [weak panel] in panel?.hide() }
         store.onOpenWorkspace = { [weak self] section in self?.showWorkspace(section) }
+        store.onBeginDesktopInterest = { [weak self] in
+            self?.workspace?.orderOut(nil)
+            self?.companion?.dismissChatBubble()
+        }
         store.onOpenPlay = { [weak self] in self?.showWorkspace(.play) }
         playHost.onVisibilityChanged = { [weak panel] visible in panel?.setPresentedInHabitat(visible) }
         playHost.onJourneyOriginChanged = { [weak store] origin in store?.evolution.observeJourneyOrigin(origin) }
-        // Reuse the same paused Habitat host to recover the existing individual
-        // at launch. It stays paused until opened and reuses the existing Journey owner.
-        playHost.start()
+        playHost.onJourneyProjectionChanged = { [weak store] projection in store?.observeQiMonJourney(projection) }
+        // Desktop-only delivery reads the validated native companion record.
+        // The retained game host, web view and local server are not started.
+        if store.allowsPlay { playHost.start() }
         panel.show()
         let control = ReactorControlServer(profile: Bundle.main.bundleIdentifier == "com.quotient.archi.desktop.review" ? .review : .preview) { [weak store] request in
             store?.reactor.control(request) ?? ["ok": false, "error": "ARCHi is closing."]
@@ -90,8 +102,18 @@ final class DesktopDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         do { try control.start(); reactorControl = control }
         catch { /* The native UI remains usable if another profile owns its local control socket. */ }
         expressionObservers.append(NSWorkspace.shared.notificationCenter.addObserver(
-            forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak store] _ in
-                Task { @MainActor in store?.reactor.stop(reason: "Mac is sleeping. Local artwork restored.") }
+            forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self, weak store] _ in
+                Task { @MainActor in
+                    store?.voiceInput.cancel()
+                    store?.desktopInterest.cancel(reason: "Mac is sleeping. Point again when ready.")
+                    self?.harmony?.suspend()
+                    store?.stopKinLightPreview()
+                    store?.reactor.stop(reason: "Mac is sleeping. Local artwork restored.")
+                }
+            })
+        expressionObservers.append(NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in self?.harmony?.resume() }
             })
         expressionObservers.append(NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil, queue: .main) { [weak store] _ in
@@ -105,31 +127,42 @@ final class DesktopDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationWillTerminate(_ notification: Notification) { store.disconnectAssistant() }
 
     func applicationDidHide(_ notification: Notification) {
+        store.desktopInterest.cancel(reason: "ARCHi hidden. Point again when ready.")
+        store.voiceInput.cancel()
+        harmony?.suspend()
+        store.stopKinLightPreview()
         store.reactor.stop(reason: "ARCHi hidden. Local artwork restored.")
         playHost.setVisible(false)
         store.invalidateTextSelection(reason: "Workspace hidden; passage reference cleared.")
     }
 
     func applicationDidResignActive(_ notification: Notification) {
+        store.voiceInput.cancel()
         playHost.setVisible(false)
         store.invalidatePlacementPreview(reason: "Workspace is no longer active. Preview again when you return.")
     }
 
     func windowWillClose(_ notification: Notification) {
+        store.voiceInput.cancel()
         playHost.setVisible(false)
         store.invalidateTextSelection(reason: "Workspace closed; passage reference cleared.")
     }
 
     func windowDidMiniaturize(_ notification: Notification) {
+        store.voiceInput.cancel()
         playHost.setVisible(false)
         store.invalidateTextSelection(reason: "Workspace minimized; passage reference cleared.")
     }
 
     func windowDidResignKey(_ notification: Notification) {
+        store.voiceInput.cancel()
         store.invalidatePlacementPreview(reason: "Workspace focus changed. Preview again when you return.")
     }
 
-    func applicationDidBecomeActive(_ notification: Notification) { updatePlayVisibility() }
+    func applicationDidBecomeActive(_ notification: Notification) {
+        harmony?.resume()
+        updatePlayVisibility()
+    }
     func windowDidDeminiaturize(_ notification: Notification) { updatePlayVisibility() }
 
     private func updatePlayVisibility() {
@@ -138,7 +171,15 @@ final class DesktopDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard store.confirmQuitWithWorkingCopy() else { return .terminateCancel }
+        if terminationInProgress { return .terminateLater }
+        guard !isReviewingQuit else { return .terminateCancel }
+        isReviewingQuit = true
+        let canQuit = store.confirmQuitRetainingWork()
+        isReviewingQuit = false
+        guard canQuit else { return .terminateCancel }
+        terminationInProgress = true
+        store.voiceInput.cancel()
+        harmony?.suspend()
         reactorControl?.stop(); reactorControl = nil
         Task { [store, playHost] in
             // Retire answer ownership first, before waiting for presentation cleanup.
@@ -158,23 +199,31 @@ final class DesktopDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func showWorkspace(_ section: WorkspaceSection) {
-        store.section = section
+        store.section = section == .play && !store.allowsPlay ? .assistant : section
         if workspace == nil {
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1080, height: 750),
+            let window = WorkspaceWindow(contentRect: NSRect(x: 0, y: 0, width: 1080, height: 750),
                                   styleMask: [.titled, .closable, .miniaturizable, .resizable],
                                   backing: .buffered, defer: false)
             window.title = Bundle.main.bundleIdentifier == "com.quotient.archi.desktop.review"
                 ? "ARCHi · Development Review" : "ARCHi · Desktop Preview"
             window.titlebarAppearsTransparent = true
             window.backgroundColor = NSColor(calibratedRed: 0.97, green: 0.96, blue: 0.95, alpha: 1)
-            window.contentMinSize = NSSize(width: 880, height: 640)
-            window.contentView = NSHostingView(rootView: WorkspaceView(store: store, playHost: playHost))
+            window.contentView = WorkspaceView.makeHostingView(store: store, playHost: playHost)
+            WorkspaceView.applyWindowMinimum(to: window)
             window.isReleasedWhenClosed = false
             window.delegate = self
             window.center()
             workspace = window
         }
         workspace?.makeKeyAndOrderFront(nil)
+        // NavigationSplitView installs native window chrome during attachment.
+        // Reapply the window-owned minimum after that first layout turn.
+        if let workspace {
+            DispatchQueue.main.async { [weak workspace] in
+                guard let workspace else { return }
+                WorkspaceView.applyWindowMinimum(to: workspace)
+            }
+        }
         NSApp.activate(ignoringOtherApps: true)
         updatePlayVisibility()
     }
@@ -182,10 +231,24 @@ final class DesktopDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc private func openAssistant() { showWorkspace(.assistant) }
     @objc private func openAppearance() { showWorkspace(.appearance) }
     @objc private func openEvolution() { showWorkspace(.evolution) }
+    @objc private func openNodeLab() { showWorkspace(.nodeLab) }
     @objc private func openSettings() { showWorkspace(.rhythm) }
     @objc private func showCompanion() { store.showCompanion() }
     @objc private func hideCompanion() { store.hideCompanion() }
     @objc private func stopWork() { store.cancelWork(); store.reactor.stop() }
+
+    @objc private func showAbout() {
+        var options: [NSApplication.AboutPanelOptionKey: Any] = [
+            .applicationName: "ARCHi",
+            .credits: NSAttributedString(string: "A personal desktop companion by Quotient Intelligent.\nIdeas × Insight × Impact.")
+        ]
+        if let mark = QuotientBranding.mark { options[.applicationIcon] = mark }
+        NSApp.orderFrontStandardAboutPanel(options: options)
+    }
+
+    @objc private func revealApplication() {
+        NSWorkspace.shared.activateFileViewerSelecting([Bundle.main.bundleURL])
+    }
 
     private func item(_ title: String, _ action: Selector, key: String = "") -> NSMenuItem {
         let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
@@ -197,6 +260,9 @@ final class DesktopDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let menu = NSMenu()
         let appRoot = NSMenuItem()
         let appMenu = NSMenu(title: "ARCHi")
+        appMenu.addItem(item("About ARCHi", #selector(showAbout)))
+        appMenu.addItem(item("Show ARCHi in Finder", #selector(revealApplication)))
+        appMenu.addItem(.separator())
         appMenu.addItem(item("Settings…", #selector(openSettings), key: ","))
         appMenu.addItem(.separator())
         appMenu.addItem(NSMenuItem(title: "Hide ARCHi", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h"))
@@ -218,6 +284,7 @@ final class DesktopDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         windowMenu.addItem(item("Assistant", #selector(openAssistant), key: "1"))
         windowMenu.addItem(item("Appearance", #selector(openAppearance), key: "2"))
         windowMenu.addItem(item("Evolution", #selector(openEvolution), key: "3"))
+        windowMenu.addItem(item("Node Lab", #selector(openNodeLab), key: "4"))
         windowMenu.addItem(item("Show companion", #selector(showCompanion)))
         windowMenu.addItem(item("Hide companion", #selector(hideCompanion)))
         windowMenu.addItem(item("Stop current work", #selector(stopWork), key: "."))
@@ -233,6 +300,7 @@ final class DesktopDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let quick = NSMenu()
         quick.addItem(item("Show ARCHi", #selector(showCompanion)))
         quick.addItem(item("Open assistant", #selector(openAssistant)))
+        quick.addItem(item("Open Node Lab", #selector(openNodeLab)))
         quick.addItem(item("Appearance", #selector(openAppearance)))
         quick.addItem(item("Settings…", #selector(openSettings)))
         quick.addItem(.separator())

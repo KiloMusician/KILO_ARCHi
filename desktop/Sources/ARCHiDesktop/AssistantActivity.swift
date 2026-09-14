@@ -110,13 +110,37 @@ extension AssistantLaneReceipt {
 
 struct AssistantReceiptDetails: View {
     let receipt: AssistantLaneReceipt
+    var onOpenGraph: (() -> Void)? = nil
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             if let settings = receipt.settings {
-                Text((receipt.requestStarted ? "Sent with · " : "Prepared with · ") + settings.summary)
+                Text((receipt.requestStarted ? "Attempted with · " : "Prepared with · ") + settings.summary)
                     .accessibilityIdentifier("assistant-captured-settings")
             }
+            if let pointing = receipt.pointing {
+                Text("Point and explain · " + pointing.gesture.summary)
+                    .accessibilityIdentifier("assistant-captured-pointing")
+                    .help("The staff gesture captured for this request. Changing your gesture affects the next request.")
+            }
             Text(receipt.workSummary).accessibilityIdentifier("assistant-observed-calls")
+            AssistantEvidenceDetails(receipt: receipt)
+            if let onOpenGraph {
+                Button("Explore in Node Lab", systemImage: "point.3.connected.trianglepath.dotted", action: onOpenGraph)
+                    .buttonStyle(.borderless)
+                    .accessibilityIdentifier("assistant-receipt.open-graph")
+            }
+            if receipt.provider == .qwen {
+                Text(receipt.conversationDeliveryDescription)
+                    .accessibilityIdentifier("assistant-captured-conversation")
+            }
+            if let reason = receipt.routingReason {
+                Text(reason).accessibilityIdentifier("assistant-routing-reason")
+            }
+            if let outcome = receipt.admissionOutcome {
+                DisclosureGroup(outcome.summary) {
+                    Text(outcome.detail).textSelection(.enabled)
+                }.accessibilityIdentifier("assistant-admission-outcome")
+            }
             if !receipt.localLessons.isEmpty {
                 DisclosureGroup("Local context · \(receipt.localLessons.count) kept lesson(s)") {
                     VStack(alignment: .leading, spacing: 8) {
@@ -139,6 +163,13 @@ struct AssistantReceiptDetails: View {
 }
 
 extension AssistantLaneReceipt {
+    var conversationDeliveryDescription: String {
+        let attempted = localInvocations?.contains(.reasoning) == true
+        let prefix = attempted ? "Reasoning context" : "Prepared follow-up context"
+        let omitted = localConversationOmittedCount == 0 ? "" : " · \(localConversationOmittedCount) older exchange(s) omitted to fit"
+        return "\(prefix) · \(localConversationCount) earlier Qwen exchange(s)\(omitted). Prior answers are unverified context."
+    }
+
     func lessonDeliveryDescription(for lesson: LessonSnapshot) -> String {
         if usedLessonIDs.contains(lesson.modelID) { return "Cited by Qwen in its accepted reply." }
         if localInvocations?.contains(.reasoning) == true {

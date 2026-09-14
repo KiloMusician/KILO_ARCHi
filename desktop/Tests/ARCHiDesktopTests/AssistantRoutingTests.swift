@@ -116,7 +116,7 @@ final class AssistantRoutingTests: XCTestCase {
         for provider in [AssistantProvider.qwen, .codex] {
             let receipt = try XCTUnwrap(store.compareResults[provider]?.receipt)
             XCTAssertEqual(receipt.settings, local.settings)
-            XCTAssertEqual(receipt.inputContract, "native-assistant-input/v3")
+            XCTAssertEqual(receipt.inputContract, "native-assistant-input/v4")
             XCTAssertTrue(receipt.requestStarted)
             XCTAssertNotNil(receipt.elapsedMilliseconds)
         }

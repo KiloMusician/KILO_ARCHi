@@ -62,6 +62,8 @@ struct HamptonSessionContext: Sendable {
 
     private(set) var turn = 0
     private(set) var records: [SessionContextRecord] = []
+    /// IDs retired during the current tentative beginTurn, without retained text.
+    private(set) var recentOmissions: [AssistantEvidenceOmission] = []
     private var sessionID = UUID().uuidString
     private var candidates: [SessionContextCandidate] = []
     private var requestIdentity: RequestIdentity?
@@ -71,9 +73,14 @@ struct HamptonSessionContext: Sendable {
     mutating func beginTurn(request: AssistantRequest) -> [SessionContextCandidate] {
         // A practical lifetime cannot reach this boundary, but never wrap a freshness counter.
         if turn >= Int.max - Self.userLifetimeTurns { clear() }
+        recentOmissions = []
         turn += 1
         reconcileSource(request: request)
         let currentTurn = turn
+        let expired = records.filter { $0.expiresAtTurn <= currentTurn }.map(\.id)
+        if !expired.isEmpty {
+            recentOmissions.append(.init(kind: .sessionRecords, reason: .expired, ids: expired, count: expired.count))
+        }
         records.removeAll { $0.expiresAtTurn <= currentTurn }
         candidates = []
         requestIdentity = nil
@@ -155,6 +162,10 @@ struct HamptonSessionContext: Sendable {
     /// Name, revision, and exact UTF-8 digest define one shared-copy identity.
     mutating func reconcileSource(request: AssistantRequest) {
         let next = Self.documentSourceID(request)
+        let revoked = records.filter { $0.kind == .document && $0.sourceID != next }.map(\.id)
+        if !revoked.isEmpty {
+            recentOmissions.append(.init(kind: .sessionRecords, reason: .revoked, ids: revoked, count: revoked.count))
+        }
         records.removeAll { $0.kind == .document && $0.sourceID != next }
         guard next != sourceID else { return }
         sourceID = next

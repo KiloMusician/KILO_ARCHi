@@ -59,11 +59,13 @@ final class EvolutionIntegrationTests: XCTestCase {
     }
 
     @MainActor
-    func testUnscopedAndChangedSourceBytesCannotCount() async throws {
+    func testConversationCanCountButChangedSourceBytesCannot() async throws {
         let store = fixture()
         try await answer(store)
         var id = try XCTUnwrap(store.compareResults[.qwen]?.receipt?.requestID)
-        XCTAssertFalse(store.markReplyUsefulForEvolution(provider: .qwen, requestID: id))
+        XCTAssertTrue(store.markReplyUsefulForEvolution(provider: .qwen, requestID: id))
+        XCTAssertNil(store.evolution.usefulReceipts.first?.sourceDigest)
+        XCTAssertNotNil(store.evolution.usefulReceipts.first?.requestBinding)
         store.share(text: "Synthetic source A.", name: "fixture.txt")
         try await answer(store)
         id = try XCTUnwrap(store.compareResults[.qwen]?.receipt?.requestID)
@@ -71,7 +73,7 @@ final class EvolutionIntegrationTests: XCTestCase {
         // reuse an old receipt because admission compares exact source digests.
         store.sharedText = "Synthetic source B."
         XCTAssertFalse(store.markReplyUsefulForEvolution(provider: .qwen, requestID: id))
-        XCTAssertTrue(store.evolution.usefulReceipts.isEmpty)
+        XCTAssertEqual(store.evolution.usefulReceipts.count, 1)
         await store.shutdownAssistant()
     }
 

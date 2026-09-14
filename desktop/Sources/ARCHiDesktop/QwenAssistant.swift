@@ -20,7 +20,7 @@ enum QwenFailure: Error, LocalizedError, Equatable {
         case .nonLocalModel: "This model could not be verified as a local Qwen completion model. Nothing was sent."
         case .modelChanged: "The installed Qwen model changed. Connect again before sending your question."
         case .invalidResponse: "Local Qwen returned an unexpected response. The reply was stopped."
-        case .contextLimit: "This question and shared copy exceed the local Qwen limit of 24 KB. Share a shorter document; nothing was sent."
+        case .contextLimit: "The question, shared copy and local context exceed the Qwen request limit of 24 KB. Use a shorter question or document, or start a new conversation; nothing was sent."
         case .outputLimit: "Local Qwen reached the reply limit. Ask for a shorter answer."
         case .timedOut: "Local Qwen did not finish in time. Connect again to retry."
         case .stopped: "The local response was stopped."
@@ -72,12 +72,13 @@ final class QwenAssistant: AssistantClient, LocalRoleClient {
 
     func reply(to request: AssistantRequest, onEvent: @escaping @MainActor (AssistantEvent) -> Void) async throws {
         guard request.hasValidSelection, request.hasValidRevisionTarget else { throw QwenFailure.invalidResponse }
-        guard request.hasValidLocalLessons else { throw QwenFailure.invalidResponse }
+        guard request.hasValidLocalLessons, request.hasValidLocalConversation else { throw QwenFailure.invalidResponse }
         guard metadata != nil else { throw QwenFailure.unavailable }
         guard !busy else { throw QwenFailure.busy }
         let input = request.localInput
         let system = (request.revisionTarget == nil ? AssistantInstructions.groundedText : AssistantInstructions.passageRevisionText)
             + (request.localLessons.isEmpty ? "" : "\n" + LocalLessonGuidance.text)
+            + (request.localConversation.isEmpty ? "" : "\n" + LocalConversationGuidance.text)
         guard !request.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               input.utf8.count + system.utf8.count <= Self.maximumInputBytes else {
             throw QwenFailure.contextLimit
@@ -85,10 +86,10 @@ final class QwenAssistant: AssistantClient, LocalRoleClient {
         if let target = request.revisionTarget {
             let memoryIDs = request.localLessons.map(\.modelID)
             let result = try await generateText(system: system, input: input,
-                format: PassageRevisionValidator.schema(target: target, sourceIDs: request.sourceIDs, memoryIDs: memoryIDs))
+                format: PassageRevisionValidator.schema(target: target, sourceIDs: request.localSourceIDs, memoryIDs: memoryIDs))
             try requireOwner(result.owner)
             let proposal: PassageRevisionProposal
-            do { proposal = try PassageRevisionValidator.parse(result.text, target: target, sourceIDs: request.sourceIDs, memoryIDs: memoryIDs) }
+            do { proposal = try PassageRevisionValidator.parse(result.text, target: target, sourceIDs: request.localSourceIDs, memoryIDs: memoryIDs) }
             catch { throw QwenFailure.invalidResponse }
             try requireOwner(result.owner)
             onEvent(.revision(proposal))
@@ -114,7 +115,8 @@ final class QwenAssistant: AssistantClient, LocalRoleClient {
         // Transport completion does not validate the role's JSON or promote it
         // to memory/answer state. That remains the receiving role validator's job.
         return LocalRoleResult(requestID: request.id, role: request.role, text: result.text,
-                               model: result.metadata, elapsedMilliseconds: result.elapsedMilliseconds)
+                               model: result.metadata, elapsedMilliseconds: result.elapsedMilliseconds,
+                               metrics: result.metrics)
     }
 
     /// Both conversational and structured calls use the same verified, bounded
@@ -122,7 +124,8 @@ final class QwenAssistant: AssistantClient, LocalRoleClient {
     /// JSON private until the terminal event and request ownership are checked.
     private func generateText(system: String, input: String, format: JSONValue?,
                               onText: (@MainActor (String) -> Void)? = nil) async throws
-        -> (text: String, metadata: QwenModelMetadata, elapsedMilliseconds: Int, owner: UInt64) {
+        -> (text: String, metadata: QwenModelMetadata, elapsedMilliseconds: Int, owner: UInt64,
+            metrics: LocalInferenceMetrics?) {
         guard let installed = metadata else { throw QwenFailure.unavailable }
         guard !busy else { throw QwenFailure.busy }
         var payload: [String: JSONValue] = [
@@ -187,7 +190,7 @@ final class QwenAssistant: AssistantClient, LocalRoleClient {
                 try stream.finish()
                 let duration = started.duration(to: .now).components
                 let milliseconds = max(0, duration.seconds * 1_000 + duration.attoseconds / 1_000_000_000_000_000)
-                return (stream.text, current, Int(milliseconds), owner)
+                return (stream.text, current, Int(milliseconds), owner, stream.metrics)
             } onCancel: {
                 Task { @MainActor [weak self] in self?.cancel(owner: owner) }
             }
@@ -330,6 +333,7 @@ struct QwenReplyStream {
     let model: String
     private(set) var text = ""
     private(set) var done = false
+    private(set) var metrics: LocalInferenceMetrics?
     private var events = 0
 
     init(model: String) { self.model = model }
@@ -339,9 +343,10 @@ struct QwenReplyStream {
         if data.allSatisfy({ $0 == 13 || $0 == 32 || $0 == 9 }) { return nil }
         guard !done, events < 4096 else { throw QwenFailure.invalidResponse }
         events += 1
-        let value: JSONValue
-        do { value = try JSONDecoder().decode(JSONValue.self, from: data) }
+        let event: QwenChatStreamEvent
+        do { event = try QwenChatStreamEvent(data: data) }
         catch { throw QwenFailure.invalidResponse }
+        let value = event.value
         guard value["error"] == nil, value["model"]?.string == model,
               ["remote_host", "remote_model"].allSatisfy({ value[$0] == nil || value[$0]?.string == "" }),
               let finished = value["done"]?.bool,
@@ -354,6 +359,7 @@ struct QwenReplyStream {
         if finished {
             guard value["done_reason"]?.string == "stop" else { throw QwenFailure.outputLimit }
             done = true
+            metrics = event.metrics
         }
         text += content
         return content.isEmpty ? nil : text
