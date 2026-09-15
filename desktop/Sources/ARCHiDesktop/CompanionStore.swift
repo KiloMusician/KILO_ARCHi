@@ -212,6 +212,7 @@ final class CompanionStore: ObservableObject {
     private var preferenceDocument = NativePreferenceDocument()
     private var preferenceBaseline: Data?
     private var preferenceFileReadable = true
+    private var preferenceBaselineKnownCurrent = true
     @Published private(set) var profileRecoveryBlock: String?
     private let wallClock: () -> Date
     let evolution: EvolutionStore
@@ -227,6 +228,14 @@ final class CompanionStore: ObservableObject {
         return preferences == saved ? .saved : .changed
     }
     var hasSavedPreferences: Bool { preferenceDocument.preferences != nil }
+    /// The outfit retained for a later visit is independent of this visit's
+    /// equipment, other changed settings, and the current Save opt-in.
+    var savedMarketplaceEquipment: CompanionEquipment? {
+        marketplaceOutfitReadable ? preferenceDocument.preferences?.equipment : nil
+    }
+    var marketplaceOutfitReadable: Bool {
+        preferenceFileReadable && preferenceBaselineKnownCurrent && profileRecoveryBlock == nil
+    }
     var knownRetainedLessonCount: Int { preferenceDocument.lessons.count }
     var hasRetainedQiMon: Bool { preferenceDocument.qiMon != nil }
     var hasRetainedFocusGesture: Bool { preferenceDocument.focusGesture != nil }
@@ -1480,7 +1489,52 @@ final class CompanionStore: ObservableObject {
             marketplaceMessage = "Add this design to My items before equipping it."; return false
         }
         preferences.equipment = CompanionEquipment(hand: .focusStaff, design: item)
-        marketplaceMessage = "\(item.title) equipped for this visit. Save choices in What I remember to wear it next time."
+        if !marketplaceOutfitReadable {
+            marketplaceMessage = "\(item.title) equipped for this visit. The saved outfit could not be read."
+        } else if savedMarketplaceEquipment == preferences.equipment {
+            marketplaceMessage = "\(item.title) equipped. This outfit is also saved for the next visit."
+        } else if savedMarketplaceEquipment != nil {
+            marketplaceMessage = "\(item.title) equipped for this visit. Your saved outfit is unchanged; review Save choices in What I remember to update it."
+        } else {
+            marketplaceMessage = "\(item.title) equipped for this visit. Save choices in What I remember to wear it next time."
+        }
+        return true
+    }
+
+    @discardableResult
+    func unequipMarketItem(_ item: CompanionItemPackage) -> Bool {
+        guard !isShuttingDown, item.isValid,
+              preferences.equipment == CompanionEquipment(hand: .focusStaff, design: item) else {
+            marketplaceMessage = "This design is not available to unequip from the current outfit."
+            return false
+        }
+        preferences.equipment = .empty
+        if !marketplaceOutfitReadable {
+            marketplaceMessage = "\(item.title) unequipped for this visit. The saved outfit could not be read."
+        } else if savedMarketplaceEquipment != nil {
+            marketplaceMessage = "\(item.title) unequipped for this visit. Your saved outfit is unchanged."
+        } else {
+            marketplaceMessage = "\(item.title) unequipped for this visit. No outfit is saved for the next visit."
+        }
+        return true
+    }
+
+    func canUseMarketItemInWorkTogether(_ item: CompanionItemPackage) -> Bool {
+        !isShuttingDown && item.isValid && itemLibrary.contains(item)
+            && preferences.equipment == CompanionEquipment(hand: .focusStaff, design: item)
+            && preferences.equipment.supportsPointing
+    }
+
+    /// This shortcut only opens the existing workspace. Pointing, reading a
+    /// source, and asking a model remain separate actions owned by Work together.
+    @discardableResult
+    func useMarketItemInWorkTogether(_ item: CompanionItemPackage) -> Bool {
+        guard canUseMarketItemInWorkTogether(item) else {
+            marketplaceMessage = "Equip this pointing design from My items before using it in Work together."
+            return false
+        }
+        open(.context)
+        marketplaceMessage = "Work together is ready. Select a passage, then choose Point with staff to use \(item.title)."
         return true
     }
 
@@ -1884,6 +1938,7 @@ extension CompanionStore {
             let baseline = try NativePreferencePersistence.write(document: next, to: preferenceURL, expected: preferenceBaseline)
             // Atomic write completes before any admitted state or request changes.
             preferenceBaseline = baseline
+            preferenceBaselineKnownCurrent = true
             preferenceDocument = next
             keptLessons = next.lessons
             keptFocusGesture = next.focusGesture
@@ -1892,6 +1947,16 @@ extension CompanionStore {
             lessonRevision = next.revision
             return true
         } catch {
+            // A known external edit invalidates claims about the next visit's
+            // outfit without replacing the last admitted profile or its owner.
+            if let preferenceError = error as? NativePreferenceError {
+                switch preferenceError {
+                case .conflict, .invalidLocation:
+                    preferenceBaselineKnownCurrent = false
+                default:
+                    break
+                }
+            }
             lessonMessage = "Could not save: \(error.localizedDescription) Previous saved choices are unchanged."
             status = lessonMessage
             return false
@@ -1950,6 +2015,7 @@ extension CompanionStore {
         preferenceDocument = loaded.document
         preferenceBaseline = loaded.baseline
         preferenceFileReadable = true
+        preferenceBaselineKnownCurrent = true
         preferences = loaded.document.preferences ?? CompanionPreferences()
         rememberPreferences = loaded.document.preferences != nil
         keptLessons = loaded.document.lessons

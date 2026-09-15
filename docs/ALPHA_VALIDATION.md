@@ -79,3 +79,11 @@ Current authored checkout full native suite: 629 XCTest cases, 32 skipped, zero 
 No live models, payments or Arena effects were invoked. Signed Development Review staging passed; it was not installed or launched over an open user session. Full marketplace click-through, native VoiceOver, file-panel interaction and daily-use qualification remain open. Site desktop/mobile checks are separate from native acceptance.
 
 The separately prepared public copy builds and passes its focused marketplace/equipment/persistence selection: 44 XCTest cases, 2 opt-in presentation skips, zero failures. The copy's source allowlist scan reports no findings. The historical Alpha tag and inactive CI template remain unchanged.
+
+## Marketplace interaction polish — 14 September 2026
+
+The final authored selection passed **65 contract/integration tests**, zero failures/skips, covering item packages, outfit retention, collection persistence, existing gesture execution and profile recovery. Two separate **visible native interaction tests passed**, zero failures/skips. They used actual native controls in disposable profiles: decoded import review → variation → Create → collect → equip → Work together → real NSTextView selection → Remember/Save → unequip and store recreation, with synthetic KIN identity preserved. Full-collection Add was disabled and variation handoff remained usable. The native workspace was tested at 880×640; collection review at 630×500. No model or capture calls and no Arena load occurred.
+
+Earlier harness failures involved native sizing, accessibility-role lookup and waiting for SwiftUI updates; corrected harness runs passed. Open/Save file panels, keyboard traversal, VoiceOver, OS-process restart and ordinary-day qualification remain separate. View-cache images may omit composited layers and are not full visual acceptance.
+
+This public export separately compiled and passed **23 outfit/collection persistence tests**, zero failures/skips. Source scanning found no findings. The Review candidate was built, plist checked and strictly ad-hoc signature verified, with installed/open apps preserved. The historical Alpha tag and inactive CI template are unchanged; this is source Alpha polish, not a Beta or notarized installer.

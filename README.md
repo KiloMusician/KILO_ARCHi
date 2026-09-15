@@ -2,7 +2,7 @@
 
 ARCHi is a local-first macOS companion with text assistance, explicitly kept lessons, a shared document workspace and one continuing KIN. The native app owns assistance, memory, permissions and saved companion development. A separate Unity companion/play preview explores the same design with local presentation and practice interactions.
 
-**Source Alpha update · package version 0.7.0.** The earlier [September 7 source Alpha](https://github.com/cr8ph8/ARCHi/releases/tag/v0.7.0-alpha.1) remains available at its original tag. This update has separate exported-source checks and is not a Beta release. See [validation and remaining work](docs/ALPHA_VALIDATION.md). No notarized installer, model weights, marketplace or release date is included.
+**Source Alpha update · package version 0.7.0.** The earlier [September 7 source Alpha](https://github.com/cr8ph8/ARCHi/releases/tag/v0.7.0-alpha.1) remains available at its original tag. This update has separate exported-source checks and is not a Beta release. See [validation and remaining work](docs/ALPHA_VALIDATION.md). No notarized installer, model weights, commerce service or release date is included.
 
 The exported source passed retained TypeScript checks and fresh native compilation. The full native run reported **594 XCTest cases, including 31 skipped, with zero failures**; Swift Testing separately reported **234 tests in 28 suites passed**, with the installed-worker public preflight explicitly skipped. These reporting systems are not added into one pass total. A separate focused selection passed **76 checks with zero failures/skips**, including native UI fixtures. The exported native candidate passed plist and local signature verification without installation or launch. The Unity build/runtime was not rerun from this export, and native ordinary-use acceptance remains separate.
 
@@ -53,7 +53,7 @@ The preview displays **“Port preview · not connected to saved companion.”**
 
 ## Local Marketplace
 
-Open **Marketplace** (Command–5) for Discover, My items and Create. Three bundled staff recipes support local appearance and approved pointing cues. Collect up to eight designs, make palette/crown/gesture variations, and explicitly import/export bounded JSON recipes. Add persists the collection; Equip applies for this visit; Save preferences keeps the outfit.
+Open **Marketplace** (Command–5) for Discover, My items and Create. Three bundled staff recipes support local appearance and approved pointing cues. Collect up to eight designs, make palette/crown/gesture variations, and explicitly import/export bounded JSON recipes. Add persists the collection; Equip applies for this visit; Save preferences keeps the outfit. Wearing now and Next visit distinguish these states. Imported variations open directly in Create, and an equipped pointing staff can open the existing Work together copy.
 
 **Unregistered items do not affect the canon game.** The local Alpha registry recognizes exact bundled designs, and no item has approved Arena effects yet. Registration, ownership, limited editions and future canon approval are different things. There is no checkout, wallet, NFT issuance or production registry service. Read the [working flow and item policy](docs/LOCAL_MARKETPLACE.md) or [website guide](https://archi-it-begins-when-you-do.channelph.chatgpt.site/marketplace) (currently owner-private).
 
