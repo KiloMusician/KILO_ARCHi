@@ -72,7 +72,7 @@ final class QwenAssistant: AssistantClient, LocalRoleClient {
 
     func reply(to request: AssistantRequest, onEvent: @escaping @MainActor (AssistantEvent) -> Void) async throws {
         guard request.hasValidSelection, request.hasValidRevisionTarget else { throw QwenFailure.invalidResponse }
-        guard request.hasValidLocalLessons, request.hasValidLocalConversation else { throw QwenFailure.invalidResponse }
+        guard request.hasValidLocalLessons, request.hasValidLocalConversation, request.hasValidLocalProfile else { throw QwenFailure.invalidResponse }
         guard metadata != nil else { throw QwenFailure.unavailable }
         guard !busy else { throw QwenFailure.busy }
         let input = request.localInput

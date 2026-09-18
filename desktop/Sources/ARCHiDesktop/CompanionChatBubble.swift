@@ -195,7 +195,7 @@ struct CompanionChatBubble: View {
         VStack(alignment: .leading, spacing: 9) {
             HStack(spacing: 8) {
                 Image(systemName: "bubble.left.and.bubble.right").foregroundStyle(ArchiPalette.violet)
-                Text(store.activeQiMon == nil ? "ARCHi" : "KIN · ARCHi")
+                Text(store.activeQiMon.map { "\($0.name) · ARCHi" } ?? "ARCHi")
                     .font(.system(size: 15, weight: .semibold, design: .rounded))
                 Spacer(minLength: 0)
                 AssistantTaskCue(activity: store.assistantActivity, quiet: store.preferences.quiet,

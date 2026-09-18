@@ -154,7 +154,7 @@ struct WorkingCopyStoreTests {
 private final class RevisionStoreRig {
     let local = RevisionStoreClient(), cloud = RevisionStoreClient()
     lazy var store = CompanionStore(preferenceURL: URL(fileURLWithPath: "/dev/null/unused"), assistant: local,
-        assistantFactory: { [cloud] _, _ in cloud })
+        assistantFactory: { [cloud] _, _ in cloud }, tokenSteward: TokenStewardStore())
 
     func begin(text: String = "Original copy.", range: NSRange? = nil, compare: Bool = false) async throws {
         store.share(text: text, name: "fixture.txt")

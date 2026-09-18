@@ -60,7 +60,7 @@ struct KeptLessonsCard: View {
                     }
                 }
             }
-            Text(store.lessonMessage).font(.system(size: 11)).foregroundStyle(ArchiPalette.violet)
+            Text(store.lessonMessage).font(.system(size: 11)).foregroundStyle(WorkspaceTheme.accent)
                 .fixedSize(horizontal: false, vertical: true).padding(.top, 12)
                 .accessibilityIdentifier("lesson-save-status")
             if !store.keptLessons.isEmpty {
@@ -130,7 +130,7 @@ struct LessonCorrectionEditor: View {
                         DatePicker("Expires", selection: Binding(get: { draft.expiresAt ?? Date() },
                             set: { draft.expiresAt = $0 }), in: Date()..., displayedComponents: [.date])
                     }
-                    Text(store.lessonMessage).font(.system(size: 11)).foregroundStyle(ArchiPalette.violet)
+                    Text(store.lessonMessage).font(.system(size: 11)).foregroundStyle(WorkspaceTheme.accent)
                         .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("lesson-editor-status")
                 }.padding(2)
             }.frame(maxHeight: 430)

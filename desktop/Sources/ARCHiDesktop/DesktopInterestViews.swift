@@ -5,15 +5,19 @@ import SwiftUI
 struct DesktopInterestCard: View {
     @ObservedObject var store: CompanionStore
     @ObservedObject var session: DesktopInterestSession
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    @Environment(\.colorScheme) private var colorScheme
 
     init(store: CompanionStore) { self.store = store; self.session = store.desktopInterest }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
             Label("Object of interest", systemImage: "viewfinder")
-                .font(.system(size: 13, weight: .semibold)).foregroundStyle(ArchiPalette.violet)
-            if let target = session.target {
-                Text(target.appName + " · " + target.title)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(colorScheme == .dark ? KinLightPalette(mode: .focus).highlight : KinLightPalette(mode: .focus).shadow)
+            DesktopInterestStatusCue(cue: session.cue)
+            if let targetName = session.cue.targetName {
+                Text(targetName)
                     .font(.system(size: 12, weight: .medium)).lineLimit(2)
             }
             Text(session.message).font(.system(size: 11)).fixedSize(horizontal: false, vertical: true)
@@ -40,7 +44,12 @@ struct DesktopInterestCard: View {
                     Button("Choose highlighted window") { session.finishAim() }
                         .disabled(session.target == nil).accessibilityIdentifier("interest.choose")
                 case .reading:
-                    ProgressView().controlSize(.small).accessibilityLabel("Reading selected window locally")
+                    if session.cue.animates(quiet: store.preferences.quiet, reduceMotion: store.preferences.reduceMotion,
+                                           systemReduceMotion: systemReduceMotion) {
+                        ProgressView().controlSize(.small).accessibilityLabel("Reading selected window locally")
+                    } else {
+                        Label("Reading locally…", systemImage: "text.viewfinder").font(.system(size: 11))
+                    }
                 case .idle, .failed, .review:
                     Button("Point at a window", systemImage: "scope") { store.beginDesktopInterest() }
                         .accessibilityIdentifier("interest.begin")
@@ -68,6 +77,21 @@ struct DesktopInterestCard: View {
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?" + anchor) {
             NSWorkspace.shared.open(url)
         }
+    }
+}
+
+/// The card and the click-through outline describe the same acquisition state.
+struct DesktopInterestStatusCue: View {
+    let cue: DesktopInterestCue
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Label(cue.title, systemImage: cue.symbol).font(.system(size: 11, weight: .semibold))
+            Text(cue.scope).font(.system(size: 10)).foregroundStyle(.secondary)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(cue.accessibilityLabel)
+        .accessibilityIdentifier("interest.scope")
     }
 }
 
@@ -103,6 +127,9 @@ struct DesktopInterestSharingNotice: View {
 @MainActor
 final class DesktopInterestOutline {
     private let panel: NSPanel
+    private let host = NSHostingView(rootView: DesktopInterestOutlineView(cue: .init(phase: .idle, target: nil), animated: false))
+    private var lastCue: DesktopInterestCue?
+    private var lastAnimated = false
     init() {
         panel = NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         panel.title = "ARCHi selected window"
@@ -110,14 +137,60 @@ final class DesktopInterestOutline {
         panel.ignoresMouseEvents = true; panel.level = .floating
         panel.hidesOnDeactivate = false; panel.isReleasedWhenClosed = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        panel.contentView = NSHostingView(rootView: RoundedRectangle(cornerRadius: 9)
-            .stroke(Color.mint, lineWidth: 4).padding(3).accessibilityHidden(true))
+        host.sizingOptions = []
+        panel.contentView = host
     }
-    func show(_ frame: CGRect?) {
-        guard let frame, !frame.isEmpty, [frame.minX, frame.minY, frame.width, frame.height].allSatisfy(\.isFinite) else {
-            panel.orderOut(nil); return
+
+    func hide() {
+        panel.orderOut(nil)
+        // Release the active TimelineView as well as hiding its window.
+        host.rootView = DesktopInterestOutlineView(cue: .init(phase: .idle, target: nil), animated: false)
+        lastCue = nil; lastAnimated = false
+    }
+
+    func show(cue: DesktopInterestCue, quiet: Bool, reduceMotion: Bool, systemReduceMotion: Bool) {
+        guard let frame = cue.outlineFrame else { hide(); return }
+        let animated = cue.animates(quiet: quiet, reduceMotion: reduceMotion, systemReduceMotion: systemReduceMotion)
+        if cue != lastCue || animated != lastAnimated {
+            host.rootView = DesktopInterestOutlineView(cue: cue, animated: animated)
+            lastCue = cue; lastAnimated = animated
         }
-        panel.setFrame(frame, display: true, animate: false)
-        panel.orderFrontRegardless()
+        if panel.frame != frame { panel.setFrame(frame, display: true, animate: false) }
+        if !panel.isVisible { panel.orderFrontRegardless() }
+    }
+}
+
+struct DesktopInterestOutlineView: View {
+    let cue: DesktopInterestCue
+    let animated: Bool
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+
+    var body: some View {
+        let moving = animated && !systemReduceMotion
+        let palette = KinLightPalette(mode: .focus)
+        TimelineView(.animation(minimumInterval: 1.0 / 12, paused: !moving)) { time in
+            GeometryReader { geometry in
+                let opacity = DesktopInterestCue.opacity(at: time.date.timeIntervalSinceReferenceDate, animated: moving)
+                ZStack(alignment: .topLeading) {
+                    RoundedRectangle(cornerRadius: 9)
+                        .stroke(palette.accent.opacity(0.22 * opacity), lineWidth: 7).padding(4)
+                    RoundedRectangle(cornerRadius: 9)
+                        .stroke(palette.highlight.opacity(opacity), style: StrokeStyle(lineWidth: 2,
+                            dash: cue.phase == .aiming ? [7, 5] : [])).padding(4)
+                    if geometry.size.width >= 180 && geometry.size.height >= 70 {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Label("ARCHi · " + cue.title, systemImage: cue.symbol)
+                                .font(.system(size: 11, weight: .semibold))
+                            Text(cue.scope).font(.system(size: 10))
+                        }
+                        .lineLimit(1).foregroundStyle(palette.highlight)
+                        .padding(.horizontal, 10).padding(.vertical, 7)
+                        .background(Color.black.opacity(0.88), in: RoundedRectangle(cornerRadius: 7))
+                        .padding(10)
+                    }
+                }
+            }
+        }
+        .allowsHitTesting(false).accessibilityHidden(true)
     }
 }

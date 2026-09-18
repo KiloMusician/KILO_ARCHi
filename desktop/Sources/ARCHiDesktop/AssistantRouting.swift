@@ -55,6 +55,8 @@ struct AssistantLaneReceipt: Equatable, Sendable {
     var elapsedMilliseconds: Int? = nil
     var localLessons: [LessonSnapshot] = []
     var localLessonDigest: String? = nil
+    var localProfileDigest: String? = nil
+    var localProfileRevision: UInt64? = nil
     var localConversationCount = 0
     var localConversationBytes = 0
     var localConversationDigest: String? = nil

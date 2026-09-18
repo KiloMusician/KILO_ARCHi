@@ -155,7 +155,7 @@ final class HamptonReasonsAssistant: AssistantClient {
         var receipts: [HamptonRoleReceipt] = []
         do {
             guard request.hasValidSelection, request.hasValidRevisionTarget, request.hasValidLocalLessons,
-                  request.hasValidLocalConversation else {
+                  request.hasValidLocalConversation, request.hasValidLocalProfile else {
                 throw QwenFailure.invalidResponse
             }
             guard !request.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
@@ -422,7 +422,7 @@ final class HamptonReasonsAssistant: AssistantClient {
             let sourceIDs = supplied.localSourceIDs
             let sources = sourceIDs.map { JSONValue.object(["id": .string($0), "label": .string($0)]) }
             do {
-                let roleRequest = try makeRequest(.reasoning,
+                let roleRequest = try Self.makeRequest(.reasoning,
                     fields: ["context": current, "sources": .array(sources), "memories": .array(memories)],
                     sourceIDs: sourceIDs, memoryIDs: memoryIDs, revisionTarget: supplied.revisionTarget)
                 return (supplied, roleRequest)
@@ -455,7 +455,7 @@ final class HamptonReasonsAssistant: AssistantClient {
         while !offered.isEmpty {
             let ids = offered.compactMap { $0["id"]?.string }
             do {
-                return try makeRequest(role, fields: ["question": .string(question), key: .array(offered)],
+                return try Self.makeRequest(role, fields: ["question": .string(question), key: .array(offered)],
                     memoryIDs: role == .memoryReminder ? ids : [], candidateIDs: role == .memorySelection ? ids : [])
             } catch HamptonAssistantFailure.contextLimit {
                 offered.removeLast()
@@ -465,7 +465,23 @@ final class HamptonReasonsAssistant: AssistantClient {
         return nil
     }
 
-    private func makeRequest(_ role: LocalModelRole, fields: [String: JSONValue], sourceIDs: [String] = [],
+    static let maximumEncodedInputBytes = 22_000
+
+    /// Pure preflight through the same envelope builder used by inference. Optional
+    /// conversation is omitted just as prepareReasoning can omit it to fit; the
+    /// current question, full source, settings and confirmed lessons are never cut.
+    static func fitsMandatoryReasoningInput(_ request: AssistantRequest) -> Bool {
+        let supplied = request.replacingLocalConversation([])
+        guard supplied.prompt.utf8.count <= 16_000, supplied.sourceText.utf8.count <= 100_000,
+              let current = try? JSONDecoder().decode(JSONValue.self, from: Data(supplied.localContextInput.utf8)) else { return false }
+        let sources = supplied.localSourceIDs.map { JSONValue.object(["id": .string($0), "label": .string($0)]) }
+        return (try? makeRequest(.reasoning,
+            fields: ["context": current, "sources": .array(sources), "memories": .array(supplied.localLessons.map(\.modelInput))],
+            sourceIDs: supplied.localSourceIDs, memoryIDs: supplied.localLessons.map(\.modelID),
+            revisionTarget: supplied.revisionTarget)) != nil
+    }
+
+    private static func makeRequest(_ role: LocalModelRole, fields: [String: JSONValue], sourceIDs: [String] = [],
                              memoryIDs: [String] = [], candidateIDs: [String] = [],
                              revisionTarget: RevisionTarget? = nil) throws -> LocalRoleRequest {
         let id = UUID().uuidString
@@ -483,7 +499,7 @@ final class HamptonReasonsAssistant: AssistantClient {
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
         let text = String(decoding: try encoder.encode(request.input), as: UTF8.self)
         let envelope: JSONValue = .object(["system": .string(request.systemInstruction), "input": .string(text), "format": schema])
-        guard try encoder.encode(envelope).count <= 22_000 else { throw HamptonAssistantFailure.contextLimit }
+        guard try encoder.encode(envelope).count <= maximumEncodedInputBytes else { throw HamptonAssistantFailure.contextLimit }
         return request
     }
 

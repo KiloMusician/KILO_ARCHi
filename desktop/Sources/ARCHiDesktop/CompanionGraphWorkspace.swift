@@ -9,7 +9,9 @@ extension CompanionStore {
             receipts: compareResults.values.compactMap(\.receipt),
             lessons: keptLessons,
             source: sourceName.map { CompanionGraphSource(name: $0, text: sharedText, revision: sourceRevision) },
-            now: now, records: hamptonSnapshot.records, turn: hamptonSnapshot.turn)
+            now: now, records: hamptonSnapshot.records, turn: hamptonSnapshot.turn,
+            arcRecords: arcCapabilities.records, arcError: arcCapabilities.lastError,
+            accountingTasks: tokenSteward.tasks, accountingError: tokenSteward.loadError)
     }
 
     func openGraphTarget(_ target: CompanionGraphTarget) {
@@ -18,6 +20,11 @@ extension CompanionStore {
         case .context: open(.context)
         case .memory: open(.memory)
         case .advanced: open(.advanced)
+        case .capabilities: open(.capabilities)
+        case .steward: open(.steward)
+        case .arcEvidence(let proposalHash):
+            arcCapabilities.selectRecord(id: proposalHash)
+            open(.capabilities)
         }
     }
 }

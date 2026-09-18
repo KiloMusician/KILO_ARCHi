@@ -9,6 +9,7 @@ struct WorkTogetherWorkspace: View {
     @State private var showsPlacement = false
     @State private var showsSettings = false
     @State private var showsInterest = false
+    @State private var showsMeetingNotes = false
     @FocusState private var composerFocused: Bool
 
     var body: some View {
@@ -27,6 +28,7 @@ struct WorkTogetherWorkspace: View {
                 .frame(width: geometry.size.width, height: geometry.size.height)
             }
         }
+        .sheet(isPresented: $showsMeetingNotes) { MeetingNotesImportSheet(store: store) }
     }
 
     private var workbenchHeader: some View {
@@ -98,7 +100,7 @@ struct WorkTogetherWorkspace: View {
 
     private var documentToolbar: some View {
         HStack(spacing: 9) {
-            Image(systemName: "doc.text").foregroundStyle(ArchiPalette.violet)
+            Image(systemName: "doc.text").foregroundStyle(WorkspaceTheme.accent)
             VStack(alignment: .leading, spacing: 2) {
                 Text(store.sourceName ?? "Your working copy")
                     .font(.system(size: 12, weight: .medium)).lineLimit(1)
@@ -122,6 +124,9 @@ struct WorkTogetherWorkspace: View {
                 .help("Save a separate text draft")
             Menu {
                 Button(store.sourceName == nil ? "Choose document…" : "Change document…") { store.chooseDocument() }
+                Button("Import meeting notes…") { showsMeetingNotes = true }
+                Button("Prepare meeting digest") { store.prepareMeetingDigest() }
+                    .disabled(store.sourceName == nil || store.isWorking)
                 Button("Stop sharing") { store.requestStopSharing() }.disabled(store.sourceName == nil)
             } label: { Image(systemName: "ellipsis.circle") }
                 .menuStyle(.borderlessButton).fixedSize()
@@ -135,7 +140,7 @@ struct WorkTogetherWorkspace: View {
     private var emptyDocument: some View {
         VStack(spacing: 12) {
             Image(systemName: "doc.text.viewfinder")
-                .font(.system(size: 38, weight: .ultraLight)).foregroundStyle(ArchiPalette.violet)
+                .font(.system(size: 38, weight: .ultraLight)).foregroundStyle(WorkspaceTheme.accent)
             Text("Bring something into focus.")
                 .font(.system(size: 19, weight: .medium, design: .rounded))
             Text("Point ARCHi at a window to read a local snapshot, or choose a text document. Then select a passage to work on together.")
@@ -144,6 +149,8 @@ struct WorkTogetherWorkspace: View {
             Button("Choose document…", systemImage: "plus") { store.chooseDocument() }
                 .buttonStyle(.borderedProminent)
                 .accessibilityIdentifier("work.choose-document")
+            Button("Import meeting notes…", systemImage: "text.bubble") { showsMeetingNotes = true }
+                .buttonStyle(.bordered).accessibilityIdentifier("work.import-meeting-notes")
             Button("Point at a window", systemImage: "scope") { store.beginDesktopInterest() }
                 .buttonStyle(.bordered).accessibilityIdentifier("work.point-window")
             Text("UTF-8 text · up to 100 KB").font(.system(size: 10)).foregroundStyle(.secondary)
@@ -155,7 +162,7 @@ struct WorkTogetherWorkspace: View {
     private var passageActions: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 6) {
-                Image(systemName: "text.cursor").foregroundStyle(ArchiPalette.violet)
+                Image(systemName: "text.cursor").foregroundStyle(WorkspaceTheme.accent)
                 Text(store.textSelection.map { "\($0.quote.count.formatted()) characters selected" } ?? "Select a passage in your draft")
                     .font(.system(size: 11)).lineLimit(1)
                     .accessibilityIdentifier("work.selection-status")
@@ -186,7 +193,7 @@ struct WorkTogetherWorkspace: View {
                     .buttonStyle(.bordered).controlSize(.small)
                     .disabled(store.textSelection == nil || store.isWorking || !store.isVisible || store.preferences.quiet)
                     .accessibilityIdentifier("work.kin-focus-light")
-                    .help("KIN focuses on the selected passage and previews a nearby position. Nothing is sent; KIN stays in place.")
+                    .help("Your companion focuses on the selected passage and previews a nearby position. Nothing is sent; your companion stays in place.")
                     if store.hasFreshKinFocus {
                         Button("Stop focus") { store.dismissPlacementPreview() }
                             .buttonStyle(.borderless).font(.system(size: 11))
@@ -312,7 +319,7 @@ struct WorkTogetherWorkspace: View {
         VStack(spacing: 0) {
             HStack(spacing: 9) {
                 CompanionPresenceArt(form: store.presentationForm, family: store.presentationFamily,
-                    size: 34, reduceMotion: store.preferences.reduceMotion || store.preferences.quiet, treatment: store.preferences.visualTreatment, recipe: store.presentationRecipe, naturalVariation: store.presentationNaturalVariation, equipment: store.preferences.equipment, lightExpression: store.kinLightExpression)
+                    size: 34, reduceMotion: store.preferences.reduceMotion || store.preferences.quiet, treatment: store.preferences.visualTreatment, recipe: store.presentationRecipe, naturalVariation: store.presentationNaturalVariation, equipment: store.preferences.equipment, lightExpression: store.kinLightExpression, seedColor: store.preferences.seedColor)
                 Text("ARCHi").font(.system(size: 15, weight: .medium, design: .rounded))
                 Spacer(minLength: 0)
                 AssistantTaskCue(activity: store.assistantActivity, quiet: store.preferences.quiet,
@@ -327,12 +334,12 @@ struct WorkTogetherWorkspace: View {
                        !store.compareResults.values.contains(where: { $0.state == .complete && $0.revision != nil }) {
                         VStack(alignment: .leading, spacing: 5) {
                             Text("SELECTED PASSAGE").font(.system(size: 9, weight: .semibold)).tracking(1)
-                                .foregroundStyle(ArchiPalette.violet)
+                                .foregroundStyle(WorkspaceTheme.accent)
                             Text(selection.quote).font(.system(size: 12)).lineSpacing(3).lineLimit(3)
                                 .help(selection.quote)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(12).background(ArchiPalette.lilac.opacity(0.14), in: RoundedRectangle(cornerRadius: 10))
+                        .padding(12).background(WorkspaceTheme.accent.opacity(0.14), in: RoundedRectangle(cornerRadius: 10))
                     }
                     if store.compareResults.isEmpty {
                         reviewIntroduction
@@ -517,12 +524,12 @@ private struct WorkTogetherReplyLane: View {
     private func passage(_ title: String, text: String, proposed: Bool) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             Text(title).font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(proposed ? ArchiPalette.violet : .secondary)
+                .foregroundStyle(proposed ? WorkspaceTheme.accent : .secondary)
             Text(text).font(.system(size: 13)).lineSpacing(4).textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(10).frame(maxWidth: .infinity, alignment: .leading)
-        .background(proposed ? ArchiPalette.lilac.opacity(0.16) : Color.primary.opacity(0.035),
+        .background(proposed ? WorkspaceTheme.accent.opacity(0.16) : Color.primary.opacity(0.035),
                     in: RoundedRectangle(cornerRadius: 8))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(title), \(provider.name)")

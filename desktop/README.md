@@ -1,16 +1,5 @@
-# ARCHi native desktop
+# Native ARCHi source
 
-From the repository root, prepare a separate locally signed candidate without launching or installing it:
+See the root README for source prerequisites and build commands, and docs/ALPHA_VALIDATION.md for exact acceptance requirements. The native Swift package owns private assistance, working context, saved companion state, installed Marketplace recipes and equipment. Unity receives a bounded presentation snapshot and explicitly entered Arena practice session. The separate loopback creator service owns development accounts, listings and acquired inventory; installation/equipment remain deliberate native actions.
 
-    ./script/build_and_run.sh --verify --review --stage-only
-
-Requires macOS 14+ and Swift 6 with the macOS SDK. The current desktop build bundles native art/branding and does not build or start the retained Habitat/Arena. Native assistance and memory remain the product owners; the separate Unity project is a disconnected companion/play preview.
-
-Package-only checks are available through SwiftPM:
-
-    swift build --package-path desktop
-    swift test --package-path desktop
-
-Some tests require opt-in windowed or provider prerequisites; read skipped checks separately. Quit a selected app normally before replacing its generated bundle. The build script checks running copies and preserves existing bundles during promotion.
-
-See [the root guide](../README.md), [architecture](../docs/ARCHITECTURE.md), [Node Lab](../docs/NODE_LAB.md), and [validation](../docs/ALPHA_VALIDATION.md). These commands describe available checks, not a claim that this exported revision passed them.
+Run `swift build --package-path desktop` and `swift test --package-path desktop` from the source root. Neither command installs or launches an app. Review opt-in/skipped tests separately. The application staging script uses local ad-hoc signing; source build success does not establish UI acceptance or notarized distribution.

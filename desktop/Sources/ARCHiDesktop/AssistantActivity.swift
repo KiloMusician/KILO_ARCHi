@@ -59,7 +59,7 @@ struct AssistantTaskCue: View {
             if showsLabel { Text(activity.title).lineLimit(1) }
         }
         .font(.system(size: 11, weight: .medium))
-        .foregroundStyle(activity == .failed ? Color.orange : ArchiPalette.violet)
+        .foregroundStyle(activity == .failed ? Color.orange : WorkspaceTheme.accent)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Assistant: \(activity.title)")
         .accessibilityIdentifier("assistant-task-activity")
@@ -76,6 +76,10 @@ struct NextReplySettingsView: View {
             Text("Next reply · " + store.nextReplySettings.summary)
                 .accessibilityIdentifier("assistant-next-settings")
                 .fixedSize(horizontal: false, vertical: true)
+            if store.route != .codex, let profile = store.personalContext?.assistantSnapshot {
+                Text("Local personal context · \(profile.preferredName) · \(profile.facts.count) details")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             HStack(spacing: 12) {
                 Button("Role & help style") { store.section = .evolution }
                 Button("Tone & length") { store.section = .rhythm }
@@ -113,6 +117,10 @@ struct AssistantReceiptDetails: View {
     var onOpenGraph: (() -> Void)? = nil
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
+            if let revision = receipt.localProfileRevision {
+                Text("Local personal context · revision \(revision) · \(receipt.localProfileDigest?.prefix(12) ?? "")")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             if let settings = receipt.settings {
                 Text((receipt.requestStarted ? "Attempted with · " : "Prepared with · ") + settings.summary)
                     .accessibilityIdentifier("assistant-captured-settings")

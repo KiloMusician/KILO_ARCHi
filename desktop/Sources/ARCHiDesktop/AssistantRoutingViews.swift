@@ -75,6 +75,10 @@ struct AssistantComposerSettingsView: View {
                 Divider()
                 Text(store.route.disclosure).font(.system(size: 11)).foregroundStyle(.secondary)
                 AssistantConversationControls(store: store)
+                Text("Send saves usage metadata locally: task and model identifiers, counts, timing and outcome. Message and document text are excluded.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Button("Usage & limits", systemImage: "chart.bar.doc.horizontal") { store.open(.steward) }
+                    .accessibilityIdentifier("assistant.open-steward")
             }
             .padding(20)
         }
@@ -87,6 +91,12 @@ struct AssistantComposerSettingsView: View {
 struct AssistantComposerConnections: View {
     @ObservedObject var store: CompanionStore
     var body: some View {
+        if let warning = store.stewardMessage ?? store.tokenSteward.loadError {
+            HStack {
+                Text(warning).font(.caption).foregroundStyle(.orange).lineLimit(2).help(warning)
+                Button("Usage & limits") { store.open(.steward) }.buttonStyle(.borderless)
+            }.accessibilityIdentifier("assistant.accounting-warning")
+        }
         if !store.isWorking && store.route != .automatic {
             ForEach(store.route.providers.filter { store.connection(for: $0) != .ready }) { provider in
                 HStack(alignment: .center, spacing: 8) {
@@ -138,7 +148,7 @@ struct AssistantProviderPanel: View {
         WorkspaceCard {
             HStack(alignment: .top, spacing: 14) {
                 Image(systemName: provider == .qwen ? "desktopcomputer" : "bubble.left.and.bubble.right")
-                    .font(.system(size: 23, weight: .light)).foregroundStyle(ArchiPalette.violet)
+                    .font(.system(size: 23, weight: .light)).foregroundStyle(WorkspaceTheme.accent)
                     .frame(width: 32)
                 VStack(alignment: .leading, spacing: 7) {
                     Text(provider.rawValue).font(.system(size: 18, weight: .medium, design: .rounded))
@@ -150,7 +160,7 @@ struct AssistantProviderPanel: View {
             Divider().padding(.vertical, 12)
             HStack(spacing: 7) {
                 Image(systemName: store.connection(for: provider) == .ready ? "checkmark.circle.fill" : "circle")
-                    .foregroundStyle(ArchiPalette.violet)
+                    .foregroundStyle(WorkspaceTheme.accent)
                 Text(store.connection(for: provider).rawValue).font(.system(size: 12, weight: .medium))
             }
             Text(store.message(for: provider)).font(.system(size: 12)).foregroundStyle(.secondary)
@@ -250,7 +260,7 @@ private struct ComparisonReplyLane: View {
         }
         .padding(12)
         .frame(minWidth: compact ? 0 : 230, maxWidth: .infinity, alignment: .topLeading)
-        .background(ArchiPalette.lilac.opacity(0.10), in: RoundedRectangle(cornerRadius: 12))
+        .background(WorkspaceTheme.accent.opacity(0.10), in: RoundedRectangle(cornerRadius: 12))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(provider.name) comparison result")
     }
@@ -279,7 +289,7 @@ struct HamptonReplyReferences: View {
                 }
                 if proposal.kind != .answer {
                     Text(proposal.kind == .clarify ? "More context needed" : "Unable to answer from this context")
-                        .font(.system(size: 10, weight: .medium)).foregroundStyle(ArchiPalette.violet)
+                        .font(.system(size: 10, weight: .medium)).foregroundStyle(WorkspaceTheme.accent)
                 }
             }
         }

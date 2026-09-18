@@ -4,8 +4,12 @@ import UniformTypeIdentifiers
 import CryptoKit
 
 enum WorkspaceSection: String, CaseIterable, Identifiable {
+    case home = "Home"
     case assistant = "Assistant"
     case nodeLab = "Node Lab"
+    case steward = "Token Steward"
+    case capabilities = "ARC Capabilities"
+    case unity = "Unity Area"
     case play = "Habitat & Arena"
     case appearance = "Appearance"
     case marketplace = "Marketplace"
@@ -27,6 +31,8 @@ enum CompanionForm: String, CaseIterable, Identifiable, Codable {
     case ribbonSpirit = "Ribbon Spirit", geode = "Crystal Core"
     case kin = "KIN · First Light", kinSpark = "KIN · Spark", kinSimple = "Simple KIN"
     case kinSeed = "KIN · Core Seed"
+    case particleSeed = "Particle Seed"
+    case hamptonSeed = "Hampton · Liminal Seed"
     var id: String { rawValue }
 
     /// Related local drawings of the same companion, not additional individuals.
@@ -35,7 +41,10 @@ enum CompanionForm: String, CaseIterable, Identifiable, Codable {
 }
 
 struct CompanionPreferences: Codable, Equatable {
+    var workspaceAppearance: WorkspaceAppearance = .system
     var form: CompanionForm = .companion
+    var seedAppearance: CompanionSeedAppearance = .kinParticles
+    var seedColor: CompanionSeedColor = .original
     var visualTreatment: CompanionVisualTreatment = .original
     var equipment: CompanionEquipment = .empty
     var tone = "Calm"
@@ -60,7 +69,10 @@ extension CompanionPreferences {
     // omit visual treatment and equipment without selecting a wearable.
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
+        workspaceAppearance = try values.decodeIfPresent(WorkspaceAppearance.self, forKey: .workspaceAppearance) ?? .system
         form = try values.decode(CompanionForm.self, forKey: .form)
+        seedAppearance = try values.decodeIfPresent(CompanionSeedAppearance.self, forKey: .seedAppearance) ?? .kinParticles
+        seedColor = try values.decodeIfPresent(CompanionSeedColor.self, forKey: .seedColor) ?? .original
         visualTreatment = try values.decodeIfPresent(CompanionVisualTreatment.self, forKey: .visualTreatment) ?? .original
         equipment = try values.decodeIfPresent(CompanionEquipment.self, forKey: .equipment) ?? .empty
         tone = try values.decode(String.self, forKey: .tone)
@@ -83,12 +95,23 @@ struct ContextTicket: Equatable, Sendable {
 
 @MainActor
 final class CompanionStore: ObservableObject {
+    let tokenSteward: TokenStewardStore
+    let arcCapabilities: ARCCapabilitiesStore
+    @Published private(set) var stewardMessage: String?
+    private var pendingStewardReceipts: [String: AssistantLaneReceipt] = [:]
+    private var pendingStewardEvaluations: [String: ARCCapabilitiesEvent] = [:]
+    private var pendingStewardUseful: Set<String> = []
     /// Desktop delivery may suspend the game without altering its saved data.
     let allowsPlay: Bool
-    @Published var section: WorkspaceSection = .assistant {
+    @Published var section: WorkspaceSection = .home {
         didSet {
-            if section == .play && !allowsPlay { section = .assistant; return }
+            if section == .play && !allowsPlay { section = .assistant }
             if section != oldValue, focusGesturePlayback != nil { stopFocusGesture() }
+            if section != oldValue, oldValue == .context {
+                // Retire the document's spatial reference at navigation time,
+                // before SwiftUI dismantles its native view during an update.
+                invalidateTextSelection(reason: "Work together closed. Select the passage again when you return.")
+            }
         }
     }
     @Published var preferences = CompanionPreferences() {
@@ -181,7 +204,7 @@ final class CompanionStore: ObservableObject {
     @Published private(set) var harmonyThemeRequest: UUID?
     private var kinLightPreviewTask: Task<Void, Never>?
     @Published private(set) var focusGestureMessage = "Teach how the staff points when you ask."
-    @Published var status = "Desktop preview · assistant not connected"
+    @Published var status = "On this Mac · assistant not connected"
     var onShowCompanion: (() -> Void)?
     var onHideCompanion: (() -> Void)?
     var onOpenLab: (() -> Void)?
@@ -209,6 +232,8 @@ final class CompanionStore: ObservableObject {
     private let assistantFactory: @MainActor (AssistantProvider, String) -> any AssistantClient
     private var retiringAssistants: [UUID: Task<Void, Never>] = [:]
     private let preferenceURL: URL
+    @Published var hasPersonalContextDraft = false
+    @Published var hasSeedDesignDraft = false
     private var preferenceDocument = NativePreferenceDocument()
     private var preferenceBaseline: Data?
     private var preferenceFileReadable = true
@@ -217,6 +242,8 @@ final class CompanionStore: ObservableObject {
     private let wallClock: () -> Date
     let evolution: EvolutionStore
     let reactor = ReactorExpressionStore()
+    let unityPresentation = UnityPresentationConnection()
+    let marketplaceCatalog = MarketplaceCatalogStore()
     private var evolutionSubscriptions = Set<AnyCancellable>()
     private var lastEvolutionAppearanceID: String?
 
@@ -244,8 +271,8 @@ final class CompanionStore: ObservableObject {
     /// inspecting another app's files. Custom/test locations remain distinct.
     var retentionProfileLabel: String {
         switch preferenceURL.standardizedFileURL.deletingLastPathComponent().lastPathComponent {
-        case "ARCHiDesktopReview": "Development Review"
-        case "ARCHiDesktop": "ARCHi"
+        case "ARCHiDesktopReview": "ARCHi"
+        case "ARCHiDesktop": "Legacy Desktop Preview"
         default: "Custom local profile"
         }
     }
@@ -278,7 +305,10 @@ final class CompanionStore: ObservableObject {
         let preview = kinLightPreview.flatMap {
             $0.isFresh(at: monotonicTime(), ticket: contextTicket()) ? $0.mode : nil
         }
-        return KinLightRules.resolve(activity: assistantActivity, hasFreshFocus: hasFreshKinFocus,
+        // Pointing shows attention to the same outlined window, without claiming
+        // its content has been read. The acquisition owner retires this cue.
+        let outlinedWindow = desktopInterest.cue.outlineFrame != nil
+        return KinLightRules.resolve(activity: assistantActivity, hasFreshFocus: hasFreshKinFocus || outlinedWindow,
             preview: preview, visible: isVisible && !isShuttingDown,
             quiet: settings.quiet, activeKin: activeQiMon != nil)
     }
@@ -355,10 +385,10 @@ final class CompanionStore: ObservableObject {
                                      role: CompanionPresentationRole = .body) -> String {
         let cue = gesture?.purpose == .practice ? ". Practicing staff gesture"
             : gesture?.purpose == .pointing ? ". Pointing with staff" : ""
-        let identity = role == .cursor && activeQiMon != nil ? "KIN · Seed cursor. " : ""
+        let identity = role == .cursor ? activeQiMon.map { "\($0.name) · Seed cursor. " } ?? "" : ""
         return identity + CompanionVisualAsset.label(form: presentationForm(for: preferences, role: role), family: presentationFamily,
             treatment: preferences.visualTreatment, recipe: presentationRecipe,
-            naturalVariation: presentationNaturalVariation, equipment: preferences.equipment) + ". Assistant: " + assistantActivity.title + cue
+            naturalVariation: presentationNaturalVariation, equipment: preferences.equipment, seedColor: preferences.seedColor) + ". Assistant: " + assistantActivity.title + cue
             + (activeQiMon == nil ? "" : ". Light expression: " + kinLightExpression(for: preferences).label)
             + (desktopInterest.phase == .idle ? "" : ". Object of interest: " + desktopInterest.message)
     }
@@ -410,9 +440,12 @@ final class CompanionStore: ObservableObject {
     }
 
     private func clearLocalConversation() {
-        localConversation.clear()
-        localConversationExpiry = nil
-        localConversationNotice = "Recent Qwen exchanges stay in this visit only."
+        // Document detachment can retire an already-empty selection during a
+        // native view update. Do not publish a change when nothing changed.
+        if !localConversation.exchanges.isEmpty { localConversation.clear() }
+        if localConversationExpiry != nil { localConversationExpiry = nil }
+        let notice = "Recent Qwen exchanges stay in this visit only."
+        if localConversationNotice != notice { localConversationNotice = notice }
     }
 
     init(preferenceURL: URL? = nil, assistant: (any AssistantClient)? = nil,
@@ -422,7 +455,8 @@ final class CompanionStore: ObservableObject {
          },
          monotonicTime: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
          wallClock: @escaping () -> Date = Date.init, allowsPlay: Bool = true,
-         voiceInput: VoiceInputController? = nil, interestReader: (any DesktopInterestReading)? = nil) {
+         voiceInput: VoiceInputController? = nil, interestReader: (any DesktopInterestReading)? = nil,
+         tokenSteward: TokenStewardStore? = nil) {
         self.voiceInput = voiceInput ?? VoiceInputController()
         self.desktopInterest = DesktopInterestSession(reader: interestReader)
         self.allowsPlay = allowsPlay
@@ -436,6 +470,8 @@ final class CompanionStore: ObservableObject {
         let resolvedPreferenceURL = preferenceURL ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("ARCHiDesktop/preferences.json")
         self.preferenceURL = resolvedPreferenceURL
+        self.tokenSteward = tokenSteward ?? TokenStewardStore(url: resolvedPreferenceURL.deletingPathExtension().appendingPathExtension("steward.json"))
+        self.arcCapabilities = ARCCapabilitiesStore(storageURL: resolvedPreferenceURL.deletingPathExtension().appendingPathExtension("arc.json"))
         // A prepared recovery journal is resolved before either saved owner is
         // admitted. A conflicting interrupted restore leaves both owners closed.
         let startupRecoveryBlock = DesktopRecoveryStartup.recoverIfNeeded(at: resolvedPreferenceURL)
@@ -465,6 +501,10 @@ final class CompanionStore: ObservableObject {
         bindHamptonAssistant()
         evolution.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }
             .store(in: &evolutionSubscriptions)
+        self.tokenSteward.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }
+            .store(in: &evolutionSubscriptions)
+        arcCapabilities.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }
+            .store(in: &evolutionSubscriptions)
         reactor.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }
             .store(in: &evolutionSubscriptions)
         self.voiceInput.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }
@@ -476,11 +516,11 @@ final class CompanionStore: ObservableObject {
         }.store(in: &evolutionSubscriptions)
         refreshReactorReference()
         lastEvolutionAppearanceID = CompanionVisualAsset.appearanceID(form: presentationForm,
-            family: presentationFamily, treatment: preferences.visualTreatment, recipe: presentationRecipe, naturalVariation: presentationNaturalVariation)
+            family: presentationFamily, treatment: preferences.visualTreatment, recipe: presentationRecipe, naturalVariation: presentationNaturalVariation, seedColor: preferences.seedColor)
         evolution.$revision.dropFirst().sink { [weak self] _ in
             guard let self else { return }
             let id = CompanionVisualAsset.appearanceID(form: self.presentationForm, family: self.presentationFamily,
-                treatment: self.preferences.visualTreatment, recipe: self.presentationRecipe, naturalVariation: self.presentationNaturalVariation)
+                treatment: self.preferences.visualTreatment, recipe: self.presentationRecipe, naturalVariation: self.presentationNaturalVariation, seedColor: self.preferences.seedColor)
             guard id != self.lastEvolutionAppearanceID else { return }
             self.lastEvolutionAppearanceID = id
             self.invalidatePlacementPreview(reason: "ARCHi's chosen appearance changed. Preview placement again.")
@@ -506,7 +546,7 @@ final class CompanionStore: ObservableObject {
     func open(_ section: WorkspaceSection) {
         voiceInput.cancel()
         let destination = section == .play && !allowsPlay ? .assistant : section
-        self.section = destination
+        if self.section != destination { self.section = destination }
         onOpenWorkspace?(destination)
     }
 
@@ -578,6 +618,63 @@ final class CompanionStore: ObservableObject {
             importedSourceURL = url.resolvingSymlinksInPath().standardizedFileURL
             return true
         } catch { status = "Could not read that UTF-8 text document."; return false }
+    }
+
+    @discardableResult
+    func importMeetingNotes(_ notes: MeetingNotesImport, sourceURL: URL? = nil,
+                            reviewWorkingCopy: (() -> Bool)? = nil) -> Bool {
+        guard canImportMeetingNotes(notes) else { status = meetingNotesBudgetNotice; return false }
+        let previousRevision = sourceRevision, previousName = sourceName
+        let previousBytes = Data(sharedText.utf8)
+        let review = reviewWorkingCopy ?? { self.confirmDiscardWorkingCopy(before: "importing meeting notes", discardTitle: "Use meeting notes instead") }
+        guard review(), sourceRevision == previousRevision, sourceName == previousName,
+              Data(sharedText.utf8) == previousBytes else { return false }
+        guard canImportMeetingNotes(notes) else { status = meetingNotesBudgetNotice; return false }
+        let hasDraftQuestion = !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        share(text: notes.sharedText, name: notes.sourceName)
+        importedSourceURL = sourceURL?.resolvingSymlinksInPath().standardizedFileURL
+        if !hasDraftQuestion { prepareMeetingDigest() }
+        workingCopyNotice = "Meeting copy opened locally. Review proposed facts before keeping a lesson."
+        status = hasDraftQuestion ? "Meeting notes shared locally · your draft question was kept" : "Meeting notes shared locally · digest question ready to send"
+        open(.context)
+        return true
+    }
+
+    func prepareMeetingDigest() {
+        guard sourceName != nil, !isWorking else { return }
+        guard meetingNotesQuestionFitsLocalBudget(MeetingNotesImport.digestQuestion,
+            sourceName: sourceName, sourceText: sharedText, sourceRevision: sourceRevision) else {
+            status = meetingNotesBudgetNotice
+            return
+        }
+        clearTextSelection()
+        requestsRevision = false
+        prompt = MeetingNotesImport.digestQuestion
+        status = "Digest question prepared · Send starts the request"
+    }
+
+    var meetingNotesBudgetNotice: String {
+        "This meeting copy and question exceed the local assistant's 22 KB encoded request budget, including instructions and lessons. Go Back and review a shorter excerpt, or shorten your current question. Selecting a passage does not remove the full shared copy. Nothing was sent or replaced."
+    }
+
+    func canImportMeetingNotes(_ notes: MeetingNotesImport) -> Bool {
+        var questions = [MeetingNotesImport.digestQuestion]
+        if !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { questions.append(prompt) }
+        return questions.allSatisfy {
+            meetingNotesQuestionFitsLocalBudget($0, sourceName: notes.sourceName,
+                sourceText: notes.sharedText, sourceRevision: sourceRevision &+ 1)
+        }
+    }
+
+    private func meetingNotesQuestionFitsLocalBudget(_ question: String, sourceName: String?,
+                                                   sourceText: String, sourceRevision: UInt64) -> Bool {
+        let lessons = keptLessons.filter {
+            $0.matches(question: question, sourceName: sourceName, sourceText: sourceText, now: wallClock())
+        }.map(LessonSnapshot.init(lesson:))
+        let request = AssistantRequest(prompt: question, sourceName: sourceName, sourceText: sourceText,
+            sourceRevision: sourceRevision, placementRevision: placementRevision, settings: nextReplySettings,
+            localLessons: lessons, companion: activeQiMon?.character, localProfile: personalContext?.assistantSnapshot)
+        return HamptonReasonsAssistant.fitsMandatoryReasoningInput(request)
     }
 
     func share(text: String, name: String) {
@@ -977,7 +1074,8 @@ final class CompanionStore: ObservableObject {
         if selectedRoute.providers.contains(.qwen) { hamptonSnapshot.proposal = nil }
         let request = AssistantRequest(prompt: question, sourceName: sourceName, sourceText: sharedText,
             sourceRevision: sourceRevision, placementRevision: placementRevision, settings: nextReplySettings,
-            selection: textSelection, revisionTarget: revisionTarget, companion: activeQiMon?.character)
+            selection: textSelection, revisionTarget: revisionTarget, companion: activeQiMon?.character,
+            localProfile: personalContext?.assistantSnapshot)
         replySourceSelection = textSelection
         // The same immutable current-input contract is dispatched to both lanes.
         // Hampton may add local-only excerpts internally; no answer is forwarded.
@@ -988,6 +1086,15 @@ final class CompanionStore: ObservableObject {
         }
         let digest = SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
         let requestID = UUID().uuidString
+        do {
+            try retryStewardReceipts()
+            try tokenSteward.preflight(requestID: requestID, route: selectedRoute)
+            stewardMessage = nil
+        } catch {
+            stewardMessage = "Usage could not be recorded: \(error.localizedDescription)"
+            status = "Not sent · " + (stewardMessage ?? "Token Steward unavailable")
+            return false
+        }
         assistantProvider = selectedRoute.primaryProvider
         compareResults = [:]
         isWorking = true; reply = ""; status = "Sending · \(selectedRoute.title)…"
@@ -1004,7 +1111,8 @@ final class CompanionStore: ObservableObject {
                 placementRevision: request.placementRevision, settings: request.settings,
                 selection: request.selection, localLessons: provider == .qwen ? capturedLessons : [],
                 revisionTarget: request.revisionTarget, companion: request.companion,
-                localConversation: provider == .qwen ? capturedConversation : [])
+                localConversation: provider == .qwen ? capturedConversation : [],
+                localProfile: provider == .qwen ? request.localProfile : nil)
             launchLane(provider, request: laneRequest, ticket: ticket, route: selectedRoute,
                        requestID: requestID, inputDigest: digest, pointing: pointing,
                        routingReason: selectedRoute == .automatic ? "Local Qwen · connects when needed; failures stay on this Mac." : nil,
@@ -1046,6 +1154,8 @@ final class CompanionStore: ObservableObject {
             compareResults[provider]?.receipt?.localLessonOmissions = omissions
         }
         compareResults[provider]?.receipt?.localLessonDigest = request.localLessonDigest
+        compareResults[provider]?.receipt?.localProfileDigest = request.localProfile?.digest
+        compareResults[provider]?.receipt?.localProfileRevision = request.localProfile?.revision
         compareResults[provider]?.receipt?.localConversationCount = request.localConversation.count
         compareResults[provider]?.receipt?.localConversationBytes = request.localConversationUTF8Bytes
         compareResults[provider]?.receipt?.localConversationDigest = request.localConversationDigest
@@ -1105,6 +1215,7 @@ final class CompanionStore: ObservableObject {
                     self.connectionMessages[provider] = "\(provider.name) connected for this request."
                     self.refreshRouteConnection()
                 }
+                try self.tokenSteward.recordDispatch(requestID: requestID, provider: provider)
                 self.compareResults[provider]?.receipt?.requestStarted = true
                 try await assistant.reply(to: request) { [weak self] event in
                     guard let self, self.isCurrentLane(provider, owner: owner, epoch: epoch, client: assistant, ticket: ticket) else { return }
@@ -1306,6 +1417,7 @@ final class CompanionStore: ObservableObject {
 
     func shutdownAssistant() async {
         guard !isShuttingDown else { return }
+        unityPresentation.stop()
         desktopInterest.cancel(reason: "ARCHi is closing.")
         clearLocalConversation()
         isShuttingDown = true
@@ -1377,12 +1489,12 @@ final class CompanionStore: ObservableObject {
         replyTasks[provider]?.cancel()
         finishOwnership(provider)
         closeConnection(provider)
-        setLane(provider, text: "", status: reason, state: .cancelled)
         if provider == .qwen {
             compareResults[provider]?.receipt?.admissionOutcome = HamptonAdmissionOutcome(status: .stopped,
                 stage: compareResults[provider]?.receipt?.requestStarted == true ? .generation : .connection,
                 role: nil, requestID: nil, reason: .cancelled)
         }
+        setLane(provider, text: "", status: reason, state: .cancelled)
         connectionMessages[provider] = "Response stopped. Connect again when you are ready."
         if provider == .qwen { hamptonSnapshot.proposal = nil }
         if provider == assistantProvider { reply = "The previous response was stopped." }
@@ -1419,6 +1531,7 @@ final class CompanionStore: ObservableObject {
 
     private func setLane(_ provider: AssistantProvider, text: String? = nil, status: String, state: AssistantLaneState) {
         guard var result = compareResults[provider] else { return }
+        let recordsTerminalOutcome = result.state == .pending && state != .pending
         if let text { result.text = text }
         if state == .cancelled || state == .failed {
             result.revision = nil
@@ -1436,6 +1549,48 @@ final class CompanionStore: ObservableObject {
         }
         result.status = status; result.state = state; result.receipt?.state = state
         compareResults[provider] = result
+        if recordsTerminalOutcome, let receipt = result.receipt {
+            let key = receipt.requestID + ":" + receipt.provider.rawValue
+            pendingStewardReceipts[key] = receipt
+            do { try tokenSteward.recordLane(receipt); pendingStewardReceipts[key] = nil }
+            catch { stewardMessage = "Answer usage could not be saved: \(error.localizedDescription)" }
+        }
+    }
+
+    private func retryStewardReceipts() throws {
+        for (key, receipt) in pendingStewardReceipts {
+            try tokenSteward.recordLane(receipt)
+            pendingStewardReceipts[key] = nil
+        }
+        for (key, event) in pendingStewardEvaluations {
+            try tokenSteward.recordEvaluation(taskID: event.taskID, evidenceID: event.evidenceID,
+                passed: event.passed, startedAt: event.startedAt, finishedAt: event.finishedAt,
+                sourceStatus: event.sourceStatus, error: event.error)
+            pendingStewardEvaluations[key] = nil
+        }
+        for requestID in pendingStewardUseful {
+            try tokenSteward.recordUseful(requestID: requestID)
+            pendingStewardUseful.remove(requestID)
+        }
+    }
+
+    func retryStewardAccounting() {
+        do { try tokenSteward.refresh(); try retryStewardReceipts(); stewardMessage = nil }
+        catch { stewardMessage = "Usage journal still needs attention: \(error.localizedDescription)" }
+    }
+
+    func recordARCEvaluation(_ event: ARCCapabilitiesEvent) {
+        pendingStewardEvaluations[event.taskID] = event
+        do {
+            try retryStewardReceipts()
+            stewardMessage = nil
+        } catch { stewardMessage = "ARC evidence remains separate; usage journal failed: \(error.localizedDescription)" }
+    }
+
+    func recordUsefulReply(requestID: String) {
+        pendingStewardUseful.insert(requestID)
+        do { try retryStewardReceipts(); stewardMessage = nil }
+        catch { stewardMessage = "Usefulness could not be recorded in Token Steward: \(error.localizedDescription)" }
     }
 
     private func refreshRouteConnection() {
@@ -1467,8 +1622,12 @@ final class CompanionStore: ObservableObject {
     // Item recipes share the existing profile's atomic admission and recovery.
     @discardableResult
     func collectMarketItem(_ item: CompanionItemPackage) -> Bool {
-        guard !isShuttingDown, item.isValid else {
+        guard !isShuttingDown else {
             marketplaceMessage = "Choose a valid item recipe before adding it."; return false
+        }
+        let review = item.review
+        guard review.isValid else {
+            marketplaceMessage = review.correctionMessage; return false
         }
         guard !itemLibrary.contains(where: { $0.id == item.id }) else {
             marketplaceMessage = "This exact design is already in My items."; return true
@@ -1906,6 +2065,7 @@ extension CompanionStore {
         export.focusGesture = nil
         export.qiMon = nil
         export.itemLibrary = []
+        export.personalContext = nil
         return try export.encoded()
     }
 
@@ -1919,6 +2079,30 @@ extension CompanionStore {
             try lessonExportData().write(to: url, options: .atomic)
             lessonMessage = "Exported \(keptLessons.count) kept lessons, including expired or unavailable ones."
         } catch { lessonMessage = "Could not export lessons. The saved originals are unchanged." }
+    }
+
+    var personalContext: PersonalContext? { preferenceDocument.personalContext }
+
+    @discardableResult
+    func updatePersonalContext(_ value: PersonalContext?, expected: PersonalContext?) -> Bool {
+        guard !isShuttingDown, preferenceDocument.personalContext == expected,
+              value?.isValid ?? true else {
+            status = "Profile changed or needs correction. Review the current context before saving."
+            return false
+        }
+        var document = preferenceDocument
+        var next = value
+        if let expected, next != nil { next?.revision = expected.revision + 1 }
+        document.personalContext = next
+        guard commitPreferenceDocument(document) else { return false }
+        // A correction/forget must not leak an old profile through follow-ups,
+        // pending callbacks, optional context banks or a stale visible answer.
+        cancelWork(reason: "Personal context updated. Earlier replies cleared.")
+        clearSessionContext()
+        clearLocalConversation()
+        status = next == nil ? "Personal context forgotten on this Mac." : "Personal context saved · local Qwen only."
+        objectWillChange.send()
+        return true
     }
 
     private func commitPreferenceDocument(_ proposed: NativePreferenceDocument) -> Bool {
