@@ -98,6 +98,10 @@ final class CompanionStore: ObservableObject {
     let tokenSteward: TokenStewardStore
     let arcCapabilities: ARCCapabilitiesStore
     @Published private(set) var stewardMessage: String?
+    /// Navigation focus is transient and never enters a profile or usage journal.
+    @Published private(set) var selectedStewardTaskID: String?
+    @Published private(set) var selectedGraphNodeID: String?
+    @Published private(set) var workspaceRoutingNotice: String?
     private var pendingStewardReceipts: [String: AssistantLaneReceipt] = [:]
     private var pendingStewardEvaluations: [String: ARCCapabilitiesEvent] = [:]
     private var pendingStewardUseful: Set<String> = []
@@ -545,9 +549,68 @@ final class CompanionStore: ObservableObject {
     }
     func open(_ section: WorkspaceSection) {
         voiceInput.cancel()
+        if workspaceRoutingNotice != nil { workspaceRoutingNotice = nil }
         let destination = section == .play && !allowsPlay ? .assistant : section
         if self.section != destination { self.section = destination }
         onOpenWorkspace?(destination)
+    }
+
+    func dismissWorkspaceRoutingNotice() { workspaceRoutingNotice = nil }
+
+    @discardableResult
+    func openARCUsage(taskID: String) -> Bool {
+        let available = tokenSteward.loadError == nil && tokenSteward.tasks.contains {
+            $0.id == taskID && $0.route == "arc-evaluation"
+        }
+        selectedStewardTaskID = available ? taskID : nil
+        open(.steward)
+        workspaceRoutingNotice = available ? nil : "That ARC usage task is unavailable. No replacement task was selected."
+        return available
+    }
+
+    @discardableResult
+    func openARCGraph(evidenceID: String) -> Bool {
+        let node = companionGraphSnapshot().nodes.first {
+            $0.kind == .evaluation && $0.target == .arcEvidence(proposalHash: evidenceID)
+        }
+        selectedGraphNodeID = node?.id
+        open(.nodeLab)
+        workspaceRoutingNotice = node == nil ? "That ARC result is unavailable in this profile's Activity map. No replacement was selected." : nil
+        return node != nil
+    }
+
+    func canOpenARCEvidenceForUsage(taskID: String) -> Bool {
+        arcEvidenceForUsage(taskID: taskID) != nil
+    }
+
+    @discardableResult
+    func openARCEvidenceForUsage(taskID: String) -> Bool {
+        guard let record = arcEvidenceForUsage(taskID: taskID) else {
+            let notice = "This usage task has no matching ARC result available in the current profile. No replacement was selected."
+            arcCapabilities.clearRecordSelection(notice: notice)
+            open(.capabilities)
+            workspaceRoutingNotice = notice
+            return false
+        }
+        let selected = arcCapabilities.selectRecord(id: record.id)
+        open(.capabilities)
+        workspaceRoutingNotice = selected ? nil : arcCapabilities.selectionNotice
+        return selected
+    }
+
+    private func arcEvidenceForUsage(taskID: String) -> ARCCapabilitiesRecord? {
+        guard tokenSteward.loadError == nil,
+              let task = tokenSteward.tasks.first(where: { $0.id == taskID && $0.route == "arc-evaluation" }) else { return nil }
+        return arcCapabilities.records.first { record in
+            let current = arcCapabilities.solverReview
+            // The journal is shared across profiles. A matching evidence hash alone
+            // cannot establish ownership of an older replay or another profile's task.
+            let currentRunMatches = current?.taskID == taskID && current?.evidenceID == record.id && current?.error == nil
+            guard record.taskID == taskID || currentRunMatches else { return false }
+            return task.outcomes.contains {
+                $0.kind == .checked && $0.evidenceID == record.id && $0.value == record.summary.allExact
+            }
+        }
     }
 
     var activeQiMon: LocalQiMon? {
@@ -1417,6 +1480,7 @@ final class CompanionStore: ObservableObject {
 
     func shutdownAssistant() async {
         guard !isShuttingDown else { return }
+        arcCapabilities.stopSolving()
         unityPresentation.stop()
         desktopInterest.cancel(reason: "ARCHi is closing.")
         clearLocalConversation()
@@ -1565,7 +1629,8 @@ final class CompanionStore: ObservableObject {
         for (key, event) in pendingStewardEvaluations {
             try tokenSteward.recordEvaluation(taskID: event.taskID, evidenceID: event.evidenceID,
                 passed: event.passed, startedAt: event.startedAt, finishedAt: event.finishedAt,
-                sourceStatus: event.sourceStatus, error: event.error)
+                sourceStatus: event.sourceStatus, error: event.error,
+                localSolver: event.localSolver, cancelled: event.cancelled)
             pendingStewardEvaluations[key] = nil
         }
         for requestID in pendingStewardUseful {

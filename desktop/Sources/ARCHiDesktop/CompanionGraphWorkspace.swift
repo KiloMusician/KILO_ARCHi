@@ -22,6 +22,7 @@ extension CompanionStore {
         case .advanced: open(.advanced)
         case .capabilities: open(.capabilities)
         case .steward: open(.steward)
+        case .stewardTask(let taskID): openARCUsage(taskID: taskID)
         case .arcEvidence(let proposalHash):
             arcCapabilities.selectRecord(id: proposalHash)
             open(.capabilities)
@@ -39,7 +40,8 @@ struct CompanionGraphWorkspace: View {
             // This clock does not animate nodes or invoke any model.
             TimelineView(.periodic(from: .now, by: 30)) { context in
                 CompanionGraphView(snapshot: store.companionGraphSnapshot(at: context.date),
-                    onOpen: store.openGraphTarget)
+                    onOpen: store.openGraphTarget, initialSelectionID: store.selectedGraphNodeID)
+                    .id(store.selectedGraphNodeID)
             }
             HStack(spacing: 10) {
                 Label("Assistant: " + store.assistantActivity.title,

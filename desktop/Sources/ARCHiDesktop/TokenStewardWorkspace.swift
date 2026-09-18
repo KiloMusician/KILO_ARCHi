@@ -7,50 +7,63 @@ struct TokenStewardWorkspace: View {
     @ObservedObject var store: TokenStewardStore
     var notice: String?
     var onRetry: () -> Void = {}
+    var selectedTaskID: String? = nil
+    var onOpenEvidence: ((String) -> Void)? = nil
+    var canOpenEvidence: (String) -> Bool = { _ in false }
     @State private var daily = ""
     @State private var monthly = ""
     @State private var message: String?
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Token Steward").font(.system(size: 30, weight: .medium, design: .rounded))
-                    Text("What ARCHi used, what it completed, and what you found useful.")
-                        .foregroundStyle(.secondary)
-                    Text("Usage metadata saves on this Mac. Questions, answers and document text are excluded.")
-                        .font(.caption).foregroundStyle(.secondary)
+        ScrollViewReader { reader in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Usage").font(.system(size: 30, weight: .medium, design: .rounded))
+                        Text("What ARCHi used, what it completed, and what you found useful.")
+                            .foregroundStyle(.secondary)
+                        Text("Usage metadata saves on this Mac. Questions, answers and document text are excluded.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    if let problem = notice ?? store.loadError {
+                        Label(problem, systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
+                            .textSelection(.enabled).accessibilityIdentifier("steward.warning")
+                        Button("Retry accounting", action: onRetry).accessibilityIdentifier("steward.retry")
+                    }
+                    if let selectedTaskID, !store.tasks.contains(where: { $0.id == selectedTaskID }) {
+                        Text("The requested task is unavailable. No replacement task was selected.")
+                            .font(.caption).foregroundStyle(.orange)
+                            .accessibilityIdentifier("steward.selection-unavailable")
+                    }
+                    if store.summary.accountingAvailable {
+                        usage
+                        outcomes
+                    } else {
+                        Text("Accounting totals are unavailable. The journal needs review before these amounts can be displayed.")
+                            .foregroundStyle(.orange)
+                    }
+                    budget
+                    if let message { Text(message).font(.caption).textSelection(.enabled) }
+                    HStack {
+                        Button("Export usage journal…", systemImage: "square.and.arrow.up") { export() }
+                            .accessibilityIdentifier("steward.export")
+                            .disabled(!store.summary.accountingAvailable)
+                        Spacer()
+                        Text("No account collector is running").font(.caption).foregroundStyle(.secondary)
+                    }
+                    if store.summary.accountingAvailable { recentTasks }
                 }
-                if let problem = notice ?? store.loadError {
-                    Label(problem, systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
-                        .textSelection(.enabled).accessibilityIdentifier("steward.warning")
-                    Button("Retry accounting", action: onRetry).accessibilityIdentifier("steward.retry")
-                }
-                if store.summary.accountingAvailable {
-                    usage
-                    outcomes
-                } else {
-                    Text("Accounting totals are unavailable. The journal needs review before these amounts can be displayed.")
-                        .foregroundStyle(.orange)
-                }
-                budget
-                if let message { Text(message).font(.caption).textSelection(.enabled) }
-                HStack {
-                    Button("Export usage journal…", systemImage: "square.and.arrow.up") { export() }
-                        .accessibilityIdentifier("steward.export")
-                        .disabled(!store.summary.accountingAvailable)
-                    Spacer()
-                    Text("No account collector is running").font(.caption).foregroundStyle(.secondary)
-                }
-                if store.summary.accountingAvailable { recentTasks }
+                .padding(28).frame(maxWidth: 940, alignment: .leading).frame(maxWidth: .infinity)
             }
-            .padding(28).frame(maxWidth: 940, alignment: .leading).frame(maxWidth: .infinity)
+            .onAppear {
+                daily = store.budget.map { TokenStewardPresentation.dollars($0.dailyNanoUSD) } ?? ""
+                monthly = store.budget.map { TokenStewardPresentation.dollars($0.monthlyNanoUSD) } ?? ""
+                focusTask(using: reader)
+            }
+            .onChange(of: selectedTaskID) { _, _ in focusTask(using: reader) }
+            .onChange(of: store.tasks.map(\.id)) { _, _ in focusTask(using: reader) }
+            .accessibilityIdentifier("steward.workspace")
         }
-        .onAppear {
-            daily = store.budget.map { TokenStewardPresentation.dollars($0.dailyNanoUSD) } ?? ""
-            monthly = store.budget.map { TokenStewardPresentation.dollars($0.monthlyNanoUSD) } ?? ""
-        }
-        .accessibilityIdentifier("steward.workspace")
     }
 
     private var usage: some View {
@@ -124,13 +137,18 @@ struct TokenStewardWorkspace: View {
     private var recentTasks: some View {
         GroupBox("Recent work") {
             VStack(alignment: .leading, spacing: 12) {
-                if store.tasks.isEmpty { Text("Your next Send will appear here.").foregroundStyle(.secondary) }
-                ForEach(Array(store.tasks.prefix(20)), id: \.id) { task in
+                if store.tasks.isEmpty { Text("Your next request or ARC run will appear here.").foregroundStyle(.secondary) }
+                ForEach(TokenStewardPresentation.visibleTasks(store.tasks, selectedTaskID: selectedTaskID)) { task in
                     VStack(alignment: .leading, spacing: 4) {
                         HStack {
-                            Text(task.route).fontWeight(.medium)
+                            Text(task.route == "arc-evaluation" ? "ARC evaluation" : task.route).fontWeight(.medium)
                             Spacer()
                             Text(task.isClosed ? "Finished" : "Open / interrupted").foregroundStyle(.secondary)
+                        }
+                        if selectedTaskID == task.id {
+                            Label("Selected run", systemImage: "scope")
+                                .font(.caption).foregroundStyle(WorkspaceTheme.accent)
+                                .accessibilityIdentifier("steward.selected-task")
                         }
                         Text(task.startedAt.formatted(date: .abbreviated, time: .shortened)).font(.caption)
                         Text(task.id).font(.system(size: 10, design: .monospaced)).textSelection(.enabled)
@@ -140,11 +158,28 @@ struct TokenStewardWorkspace: View {
                             Text("\(lane.provider) · \(lane.state)" + (lane.elapsedMilliseconds.map { " · \($0) ms" } ?? ""))
                                 .font(.caption).foregroundStyle(.secondary)
                         }
-                    }.padding(.vertical, 4)
+                        if let onOpenEvidence, canOpenEvidence(task.id) {
+                            Button("Open ARC result", systemImage: "square.grid.3x3") { onOpenEvidence(task.id) }
+                                .accessibilityIdentifier("steward.open-arc.\(task.id)")
+                        }
+                    }
+                    .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+                    .background(selectedTaskID == task.id ? WorkspaceTheme.accent.opacity(0.08) : .clear,
+                                in: RoundedRectangle(cornerRadius: 10))
+                    .accessibilityElement(children: .contain)
+                    .accessibilityAddTraits(selectedTaskID == task.id ? [.isSelected] : [])
+                    .accessibilityIdentifier("steward.task.\(task.id)")
+                    .id(task.id)
                     Divider()
                 }
             }.padding(10)
         }
+    }
+
+    private func focusTask(using reader: ScrollViewProxy) {
+        guard store.summary.accountingAvailable, let selectedTaskID,
+              store.tasks.contains(where: { $0.id == selectedTaskID }) else { return }
+        reader.scrollTo(selectedTaskID, anchor: .top)
     }
 
     private func tokens(_ total: Int64?, known: Int64, missing: Int) -> String {
@@ -178,6 +213,14 @@ struct TokenStewardWorkspace: View {
 }
 
 enum TokenStewardPresentation {
+    /// Retain the bounded recent list while making an exact older navigation target visible.
+    static func visibleTasks(_ tasks: [TokenStewardTask], selectedTaskID: String?) -> [TokenStewardTask] {
+        let recent = Array(tasks.prefix(20))
+        guard let selectedTaskID, !recent.contains(where: { $0.id == selectedTaskID }),
+              let selected = tasks.first(where: { $0.id == selectedTaskID }) else { return recent }
+        return [selected] + recent
+    }
+
     /// Parse exactly; no floating-point conversion and no silent rounding.
     static func nanoUSD(_ text: String) -> Int64? {
         let value = text.trimmingCharacters(in: .whitespacesAndNewlines)

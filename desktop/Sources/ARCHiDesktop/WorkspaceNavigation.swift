@@ -26,7 +26,7 @@ enum WorkspaceNavigation {
         case .unity: "Arena"
         case .nodeLab: "Activity map"
         case .steward: "Usage"
-        case .capabilities: "Capability checks"
+        case .capabilities: "ARC Lab"
         case .connections: "Settings"
         case .evolution: "Growth"
         case .rhythm: "Conversation"

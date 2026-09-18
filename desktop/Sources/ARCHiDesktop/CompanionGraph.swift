@@ -37,6 +37,7 @@ enum CompanionGraphKind: String, CaseIterable, Identifiable, Sendable {
 enum CompanionGraphTarget: Equatable, Sendable {
     case assistant, context, memory, advanced, capabilities, steward
     case arcEvidence(proposalHash: String)
+    case stewardTask(taskID: String)
 }
 struct CompanionGraphDetail: Equatable, Sendable { let label: String; let value: String }
 struct CompanionGraphNode: Identifiable, Equatable, Sendable {
@@ -159,6 +160,15 @@ enum CompanionGraph {
             truncated += max(0, ordered.count - 16)
             for record in ordered.prefix(16) {
                 let summary = record.summary, counts = summary.counts
+                let scope: String
+                let accountingScope: String
+                if let solving = record.solverEvidence {
+                    scope = "Recorded local symbolic search: \(solving.run.attemptedPrograms) rule attempts, \(solving.run.matchingPrograms) training fits; \(solving.run.outcome.rawValue). No model calls, growth, memory or permission changes. Opening this graph does not rerun the solver."
+                    accountingScope = "Local search and checking elapsed time. No model calls or API charges; CPU and energy cost is unmeasured. Repeated runs remain separate tasks in Token Steward."
+                } else {
+                    scope = "Local rescoring of supplied predictions. No solver execution or model calls; no growth, memory or permission changes."
+                    accountingScope = "Rescoring invokes no model. The cost of originally generating these predictions is unknown. Repeated checks remain separate tasks in Token Steward."
+                }
                 let id = key("arc-evaluation", record.id)
                 let sourceID = key("arc-manifest", summary.manifestHash)
                 let target = CompanionGraphTarget.arcEvidence(proposalHash: record.id)
@@ -173,7 +183,7 @@ enum CompanionGraph {
                     status: "Proposed · Not certified",
                     details: [.init(label: "Outcome", value: "Exact \(counts.exact) · Incorrect \(counts.incorrect) · Missing \(counts.missing) · Invalid \(counts.invalid) · Unscored \(counts.unscored)"),
                         .init(label: "Coverage", value: "Receipts \(summary.receiptCoverageComplete ? "complete" : "incomplete") · Scoring \(summary.scoredCoverageComplete ? "complete" : "incomplete")"),
-                        .init(label: "Scope", value: "Local rescoring of supplied predictions. No solver execution or model calls; no growth, memory or permission changes."),
+                        .init(label: "Scope", value: scope),
                         .init(label: "Solver ID", value: summary.solverID),
                         .init(label: "Meaning", value: "Solver provenance remains unattested. A perfect score still does not certify a capability."),
                         .init(label: "Recorded", value: record.recordedAt.ISO8601Format()),
@@ -197,7 +207,7 @@ enum CompanionGraph {
                     details: [.init(label: "Application task ID", value: record.taskID),
                         .init(label: "Elapsed", value: duration),
                         .init(label: "Outcome", value: task == nil ? (accountingError ?? "No matching accounting receipt is available.") : "The check completed. All predictions exact: \(summary.allExact ? "yes" : "no")."),
-                        .init(label: "Scope", value: "Rescoring invokes no model. The cost of originally generating these predictions is unknown. Repeated checks remain separate tasks in Token Steward.")], target: .steward)
+                        .init(label: "Scope", value: accountingScope)], target: .stewardTask(taskID: record.taskID))
                 edge(id, accountingID, task == nil ? "accounting unavailable" : "accounted by")
             }
         }

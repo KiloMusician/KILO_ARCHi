@@ -211,7 +211,7 @@ struct CompanionGraphView: View {
             VStack(alignment: .leading, spacing: 5) {
                 Text("LOCAL CONNECTIONS").font(.system(size: 9, weight: .semibold)).tracking(2)
                     .foregroundStyle(Color.teal)
-                Text("Node Lab").font(.system(size: 25, weight: .medium, design: .rounded))
+                Text("Activity map").font(.system(size: 25, weight: .medium, design: .rounded))
                 Text("\(visibleNodes.count) of \(snapshot.nodes.count) nodes · \(visibleEdges.count) connections")
                     .font(.system(size: 11)).foregroundStyle(.secondary)
                     .accessibilityIdentifier("companion-graph.counts")
@@ -515,9 +515,10 @@ struct CompanionGraphView: View {
         case .context: "Open shared context"
         case .memory: "Open memory"
         case .advanced: "Open local receipts"
-        case .capabilities: "Open ARC capabilities"
+        case .capabilities: "Open ARC Lab"
         case .arcEvidence: "Open this ARC receipt"
-        case .steward: "Open Token Steward"
+        case .steward: "Open Usage"
+        case .stewardTask: "Open this run in Usage"
         }
     }
 }

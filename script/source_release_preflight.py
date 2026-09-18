@@ -31,7 +31,7 @@ EXACT = RELEASE_FILES | ARC_REPLAY_FILES | {
     "arc/fixtures/manifest.json", "arc/fixtures/golden/smoke-evidence-v1.json",
     "arc/fixtures/smoke/synthetic-increment-001.json", "arc/fixtures/portable/smoke-evaluation-v1.json",
     "arc/fixtures/portable/third-rate-evaluation-v1.json", "arc/fixtures/golden/third-rate-evidence-v1.json",
-    "docs/native-arc-capabilities.md", "docs/native-marketplace.md", "script/build_and_run.sh",
+    "docs/native-arc-capabilities.md", "docs/native-arc-solving.md", "docs/native-arc-workspace-integration.md", "docs/native-marketplace.md", "script/build_and_run.sh",
     "script/build_unity_port.sh", "script/source_release_preflight.py",
     "script/prepare_source_candidate.py", "script/archive_source_candidate.py",
     "scripts/tests/test_prepare_source_candidate.py", "scripts/tests/test_archive_source_candidate.py",

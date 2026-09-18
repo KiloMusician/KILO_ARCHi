@@ -277,18 +277,21 @@ final class TokenStewardStore: ObservableObject {
         try recordOutcome(requestID: requestID, kind: .checked, value: passed, evidenceID: evidenceID)
     }
 
-    /// Offline rescoring is its own task category. It contributes no model calls,
+    /// Local solving and offline rescoring share an evaluation task category. It contributes no model calls,
     /// paid cost, user-useful answers or certified capability state.
     func recordEvaluation(taskID: String, evidenceID: String?, passed: Bool?,
-                          startedAt: Date, finishedAt: Date, sourceStatus: String?, error: String?) throws {
+                          startedAt: Date, finishedAt: Date, sourceStatus: String?, error: String?,
+                          localSolver: Bool = false, cancelled: Bool = false) throws {
         guard startedAt.timeIntervalSince1970.isFinite, finishedAt.timeIntervalSince1970.isFinite,
               finishedAt >= startedAt, finishedAt.timeIntervalSince(startedAt) <= Double(Int.max / 1000)
         else { throw TokenStewardError.invalid("evaluation duration") }
+        guard !cancelled || (evidenceID == nil && passed == nil) else { throw TokenStewardError.invalid("cancelled evaluation evidence") }
+        let provider = localSolver ? "ARC local symbolic solver + checker" : "ARC deterministic checker"
         try transaction { state in
-            try Self.registerTask(id: taskID, route: "arc-evaluation", providers: ["ARC deterministic checker"], date: startedAt, in: &state)
+            try Self.registerTask(id: taskID, route: "arc-evaluation", providers: [provider], date: startedAt, in: &state)
             let index = state.tasks.firstIndex { $0.id == taskID }!
-            let lane = TokenStewardLane(provider: "ARC deterministic checker", dispatched: true,
-                state: error == nil && passed != nil ? "complete" : "failed", admission: sourceStatus,
+            let lane = TokenStewardLane(provider: provider, dispatched: true,
+                state: cancelled ? "cancelled" : (error == nil && passed != nil ? "complete" : "failed"), admission: sourceStatus,
                 elapsedMilliseconds: Int(finishedAt.timeIntervalSince(startedAt) * 1000))
             guard state.tasks[index].startedAt == startedAt,
                   state.tasks[index].lanes[0].state == "pending" || state.tasks[index].lanes[0] == lane
@@ -746,7 +749,7 @@ final class TokenStewardStore: ObservableObject {
             case "compare":
                 guard providers == [AssistantProvider.qwen.name, AssistantProvider.codex.name] else { throw TokenStewardError.invalid("Compare task lanes") }
             case "arc-evaluation":
-                guard providers == ["ARC deterministic checker"] else { throw TokenStewardError.invalid("evaluation task lanes") }
+                guard providers == ["ARC deterministic checker"] || providers == ["ARC local symbolic solver + checker"] else { throw TokenStewardError.invalid("evaluation task lanes") }
             case "api": break
             default: throw TokenStewardError.invalid("task route")
             }

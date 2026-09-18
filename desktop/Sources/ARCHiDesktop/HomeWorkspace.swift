@@ -36,6 +36,7 @@ struct HomeWorkspace: View {
                             memoryPanel
                         }
                     }.padding(.top, 4)
+                    arcEntry
                     HomeFeatureDirectory(store: store).padding(.top, 6)
                 }
                 .frame(maxWidth: 1080)
@@ -113,6 +114,23 @@ struct HomeWorkspace: View {
         }
         .modifier(WorkspaceSurface(emphasis: true))
         .clipShape(RoundedRectangle(cornerRadius: WorkspaceTheme.corner))
+    }
+
+    private var arcEntry: some View {
+        HStack(alignment: .center, spacing: 16) {
+            Image(systemName: "square.grid.3x3")
+                .font(.system(size: 24, weight: .light)).foregroundStyle(WorkspaceTheme.accent)
+            VStack(alignment: .leading, spacing: 5) {
+                Text("Explore patterns with ARCHi").font(.system(size: 14, weight: .medium))
+                Text("Try a puzzle in ARC Lab. Solve locally, then follow the result into Usage and your Activity map.")
+                    .font(.system(size: 12)).foregroundStyle(WorkspaceTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+            Button("Open ARC Lab", systemImage: "arrow.right") { store.open(.capabilities) }
+                .buttonStyle(WorkspaceActionStyle())
+                .accessibilityIdentifier("home.arc-lab")
+        }.padding(18).modifier(WorkspaceSurface())
     }
 
     private var contextPanel: some View {

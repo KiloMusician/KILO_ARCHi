@@ -32,6 +32,16 @@ struct WorkspaceView: View {
             VStack(spacing: 0) {
                 workspaceHeader
                 Divider().opacity(0.6)
+                if let notice = store.workspaceRoutingNotice {
+                    HStack(alignment: .top, spacing: 10) {
+                        Label(notice, systemImage: "info.circle")
+                            .font(.callout).foregroundStyle(WorkspaceTheme.muted)
+                        Spacer(minLength: 0)
+                        Button { store.dismissWorkspaceRoutingNotice() } label: { Image(systemName: "xmark") }
+                            .buttonStyle(.plain).accessibilityLabel("Dismiss navigation notice")
+                    }.padding(14).background(WorkspaceTheme.panel)
+                        .accessibilityIdentifier("workspace.routing-notice")
+                }
                 if store.section == .home {
                     HomeWorkspace(store: store)
                 } else if store.section == .context {
@@ -45,9 +55,14 @@ struct WorkspaceView: View {
                 } else if store.section == .nodeLab {
                     CompanionGraphWorkspace(store: store)
                 } else if store.section == .steward {
-                    TokenStewardWorkspace(store: store.tokenSteward, notice: store.stewardMessage, onRetry: store.retryStewardAccounting)
+                    TokenStewardWorkspace(store: store.tokenSteward, notice: store.stewardMessage, onRetry: store.retryStewardAccounting,
+                        selectedTaskID: store.selectedStewardTaskID,
+                        onOpenEvidence: { _ = store.openARCEvidenceForUsage(taskID: $0) },
+                        canOpenEvidence: store.canOpenARCEvidenceForUsage)
                 } else if store.section == .capabilities {
-                    ARCCapabilitiesWorkspace(store: store.arcCapabilities, onEvaluation: store.recordARCEvaluation)
+                    ARCCapabilitiesWorkspace(store: store.arcCapabilities, onEvaluation: store.recordARCEvaluation,
+                        onOpenUsage: { _ = store.openARCUsage(taskID: $0) },
+                        onOpenGraph: { _ = store.openARCGraph(evidenceID: $0) })
                 } else if store.section == .play && store.allowsPlay {
                     PlayWorkspace(store: store, host: playHost)
                 } else {

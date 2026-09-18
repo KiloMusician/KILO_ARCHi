@@ -2,7 +2,7 @@
 /// chosen companion's name and from other Quotient products such as Wiki OS.
 enum ARCHiIdentity {
     static let name = "ARCHi"
-    static let descriptor = "Adaptive Companion & Field Interface"
+    static let descriptor = "ARC Hampton Interphase"
     static let homeTitle = "ARCHi Home"
     static let alphaLabel = "ARCHi · Desktop alpha"
 }
