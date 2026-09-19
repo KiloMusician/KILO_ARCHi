@@ -1,5 +1,7 @@
 # ARCHi source candidate
 
+**Native Qwen update — 19 September:** ARCHi automatically starts or reuses local Ollama and verifies the installed Qwen model. The default Qwen-first route can use one Codex fallback after an eligible failure; a retained local-only option stays available. Local memory stays out of fallback, and window snapshots require exact-copy external permission. [Operation and limits](docs/native-qwen.md).
+
 > **Code-only draft update — 18 September 2026.** New Liminal, Ball of Light, Proto and KIN rig artwork is withheld pending its separate redistribution decision. Existing published artwork remains included (PNG metadata may be removed). This branch is available for code review, but cannot reproduce the full current desktop/Unity presentation; Unity asset validation and artwork-dependent tests are expected to fail until those resources are admitted. The complete local candidate was tested separately. See [validation and omitted resources](docs/ALPHA_VALIDATION.md). No Beta or downloadable application release is declared.
 
 ARCHi combines a native macOS companion workspace, a Unity companion and practice area, and a local item marketplace. This packet prepares a source update. It is a development source snapshot, not a Beta declaration or a notarized installer.
