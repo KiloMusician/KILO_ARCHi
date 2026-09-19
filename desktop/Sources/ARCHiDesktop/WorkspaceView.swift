@@ -32,6 +32,7 @@ struct WorkspaceView: View {
             VStack(spacing: 0) {
                 workspaceHeader
                 Divider().opacity(0.6)
+                ARCActiveWorkBar(store: store)
                 if let notice = store.workspaceRoutingNotice {
                     HStack(alignment: .top, spacing: 10) {
                         Label(notice, systemImage: "info.circle")
@@ -62,7 +63,9 @@ struct WorkspaceView: View {
                 } else if store.section == .capabilities {
                     ARCCapabilitiesWorkspace(store: store.arcCapabilities, onEvaluation: store.recordARCEvaluation,
                         onOpenUsage: { _ = store.openARCUsage(taskID: $0) },
-                        onOpenGraph: { _ = store.openARCGraph(evidenceID: $0) }, qwenModel: store.qwenModel)
+                        onOpenGraph: { _ = store.openARCGraph(evidenceID: $0) }, qwenModel: store.qwenModel,
+                        interactive: AnyView(ARC3Workspace(owner: store, session: store.arc3)),
+                        prefersInteractive: store.showsARC3Reply)
                 } else if store.section == .play && store.allowsPlay {
                     PlayWorkspace(store: store, host: playHost)
                 } else {
@@ -415,7 +418,9 @@ private struct AssistantReplyContent: View {
                     .buttonStyle(.borderedProminent)
                     .accessibilityIdentifier("assistant.open-revision-review")
             }
-            if store.activeARCAnswer != nil {
+            if store.showsARC3Reply {
+                        ARC3AssistantReply(store: store, session: store.arc3)
+                    } else if store.activeARCAnswer != nil {
                 ARCActiveAssistantReply(store: store)
             } else if store.route == .compare {
                 ComparisonReplyPanels(store: store)

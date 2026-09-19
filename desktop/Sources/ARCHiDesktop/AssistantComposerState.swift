@@ -26,7 +26,9 @@ struct AssistantComposerState {
             blockedReason = nil
         }
 
-        if store.arcCommandSelected || store.isARCWorking {
+        if store.arc3CommandSelected || store.arc3.isWorking {
+            sendDisclosure = "ARC3 explores the selected local environment within its action budget. No model call or cloud request."
+        } else if store.arcCommandSelected || store.isARCWorking {
             sendDisclosure = "ARC runs on this Mac. It uses the shared ARC JSON or your loaded task; results are independently checked."
         } else if let blockedReason, !store.isWorking {
             sendDisclosure = blockedReason

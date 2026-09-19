@@ -12,13 +12,48 @@ struct ARCActiveAssistantActions: View {
             Button("Propose a rule with local Qwen") { store.runARC(.propose) }
                 .disabled(store.isWorking || store.voiceInput.isActive || store.isShuttingDown)
             Divider()
+            Button("Open interactive ARC3") { store.runARC3(.open) }
+            Button("Explore current ARC3 environment") { store.runARC3(.explore) }
+                .disabled(store.isWorking || !store.arc3.isSessionActive || store.voiceInput.isActive || store.isShuttingDown)
+            Divider()
             Button("Manage ARC tasks and results") { store.open(.capabilities) }
         } label: {
             Label("ARC task", systemImage: "square.grid.3x3")
         }
         .menuStyle(.borderlessButton).fixedSize()
         .accessibilityIdentifier("assistant.arc-actions")
-        .help("Run ARCHi’s local ARC capability on shared ARC JSON or the loaded task. Your message draft is preserved.")
+        .help("Use ARCHi’s shared ARC service for grid reasoning or interactive environments. Your message draft is preserved.")
+    }
+}
+
+/// Navigation does not create a second execution owner. The current ARC job
+/// stays inspectable and stoppable throughout the native workspace.
+@MainActor
+struct ARCActiveWorkBar: View {
+    @ObservedObject var store: CompanionStore
+
+    var body: some View {
+        if store.arc3.isSessionActive || store.arc3.isWorking || store.activeARCAnswer?.isWorking == true {
+            HStack(spacing: 12) {
+                Image(systemName: "square.grid.3x3").foregroundStyle(WorkspaceTheme.accent)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(store.arc3.isSessionActive || store.arc3.isWorking ? "ARCHi is working with ARC3" : "ARCHi is reasoning with ARC")
+                        .font(.callout.weight(.medium))
+                    Text(store.arc3.isSessionActive || store.arc3.isWorking ? store.arc3.status : store.activeARCAnswer?.status ?? "Working…")
+                        .font(.caption).foregroundStyle(WorkspaceTheme.muted).lineLimit(2)
+                }
+                Spacer(minLength: 0)
+                Button("Open task") {
+                    if store.arc3.isSessionActive || store.arc3.isWorking { store.runARC3(.open) }
+                    else { store.open(.capabilities) }
+                }.accessibilityIdentifier("workspace.arc.open")
+                Button("Stop") { store.cancelWork() }
+                    .accessibilityIdentifier("workspace.arc.stop")
+            }
+            .padding(.horizontal, 18).padding(.vertical, 10)
+            .background(WorkspaceTheme.panel)
+            .accessibilityIdentifier("workspace.arc.active")
+        }
     }
 }
 

@@ -9,9 +9,11 @@ struct ARCCapabilitiesWorkspace: View {
     var onOpenUsage: ((String) -> Void)?
     var onOpenGraph: ((String) -> Void)?
     var qwenModel: String = QwenAssistant.defaultModel
+    var interactive: AnyView? = nil
+    var prefersInteractive = false
     @State private var importError: String?
     @State private var page: Page = .solve
-    private enum Page { case solve, results }
+    private enum Page { case solve, interactive, results }
 
     var body: some View {
         ScrollViewReader { reader in
@@ -20,6 +22,7 @@ struct ARCCapabilitiesWorkspace: View {
                     heading
                     HStack(spacing: 8) {
                         pageButton("Solve a puzzle", page: .solve, identifier: "capabilities.page.solve")
+                        if interactive != nil { pageButton("Interactive ARC3", page: .interactive, identifier: "capabilities.page.arc3") }
                         pageButton("Saved results · \(store.records.count)", page: .results, identifier: "capabilities.page.results")
                         Spacer(minLength: 0)
                     }
@@ -41,6 +44,8 @@ struct ARCCapabilitiesWorkspace: View {
                         ARCQwenProposalPanel(store: store, model: qwenModel, onEvaluation: onEvaluation,
                             onOpenUsage: onOpenUsage, onOpenGraph: onOpenGraph)
                             .id("arc-qwen-panel")
+                    } else if page == .interactive {
+                        interactive
                     } else {
                         if store.records.isEmpty {
                             ContentUnavailableView("Your results will appear here", systemImage: "square.grid.3x3",
@@ -48,11 +53,12 @@ struct ARCCapabilitiesWorkspace: View {
                         }
                         ForEach(store.records) { record in recordCard(record).id(record.id) }
                     }
-                    evaluationImport
+                    if page != .interactive { evaluationImport }
                 }.padding(24).frame(maxWidth: 1000, alignment: .leading).frame(maxWidth: .infinity)
             }.accessibilityIdentifier("capabilities.workspace")
                 .onAppear {
-                    if store.isSolving || store.isProposing { page = .solve }
+                    if prefersInteractive { page = .interactive }
+                    else if store.isSolving || store.isProposing { page = .solve }
                     else if let id = store.selectedRecordID {
                         page = .results
                         DispatchQueue.main.async {
@@ -60,6 +66,7 @@ struct ARCCapabilitiesWorkspace: View {
                         }
                     }
                 }
+                .onChange(of: prefersInteractive) { _, value in if value { page = .interactive } }
                 .onChange(of: store.selectedRecordID) { _, id in
                     if let id, !store.isSolving, !store.isProposing {
                         page = .results
@@ -86,7 +93,7 @@ struct ARCCapabilitiesWorkspace: View {
     private var heading: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("ARC").font(.system(size: 28, weight: .medium, design: .rounded))
-            Text("ARCHi’s pattern-solving capability. Manage tasks, reasoning, and results.")
+            Text("ARCHi’s reasoning capabilities. Solve grids, explore environments, and review results.")
                 .foregroundStyle(WorkspaceTheme.muted)
             Text("Use ARC from Chat or your Seed’s chat bubble. Share an ARC JSON task and ask “solve this ARC puzzle”, or choose ARC task beside your message.")
                 .font(.callout).foregroundStyle(.secondary)

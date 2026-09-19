@@ -126,6 +126,7 @@ struct TokenStewardSummary: Equatable {
     var usefulTaskCount = 0
     var checkedSuccessfulTaskCount = 0
     var evaluationTaskCount = 0
+    var interactiveSessionCount = 0
     var syntheticCheckedTaskCount = 0
     var localAttemptCount = 0
     var unmeasuredLocalLaneCount = 0
@@ -338,12 +339,39 @@ final class TokenStewardStore: ObservableObject {
         }
     }
 
+    /// Interactive environment execution is neither an assistant answer nor an
+    /// exact static-grid evaluation. No model use, billing or useful-work award.
+    func recordInteractiveARC(_ summary: ARC3SessionSummary) throws {
+        let outcomes = ["complete", "budget-exhausted", "stopped", "failed", "profile-reset"]
+        guard summary.startedAt.timeIntervalSince1970.isFinite,
+              summary.finishedAt.timeIntervalSince1970.isFinite,
+              summary.finishedAt >= summary.startedAt,
+              summary.finishedAt.timeIntervalSince(summary.startedAt) < Double(Int.max / 1000),
+              (0...64).contains(summary.dispatches), (0...64).contains(summary.attemptedDispatches),
+              (0...summary.attemptedDispatches).contains(summary.unreconciledDispatches), outcomes.contains(summary.outcome)
+        else { throw TokenStewardError.invalid("interactive ARC episode") }
+        try Self.validateID(summary.gameID)
+        let provider = "ARC3 offline environment"
+        let lane = TokenStewardLane(provider: provider, dispatched: summary.dispatches > 0 || summary.attemptedDispatches > 0,
+            state: summary.outcome == "failed" ? "failed" : (["stopped", "profile-reset"].contains(summary.outcome) ? "cancelled" : "complete"),
+            admission: "\(summary.outcome) · \(summary.dispatches) confirmed · \(summary.attemptedDispatches) attempted · \(summary.unreconciledDispatches) uncertain · \(summary.lastState ?? "unknown")",
+            elapsedMilliseconds: Int(summary.finishedAt.timeIntervalSince(summary.startedAt) * 1000))
+        try transaction { state in
+            try Self.registerTask(id: summary.sessionID, route: "arc-interactive", providers: [provider], date: summary.startedAt, in: &state)
+            let index = state.tasks.firstIndex { $0.id == summary.sessionID }!
+            let old = state.tasks[index].lanes[0]
+            guard state.tasks[index].startedAt == summary.startedAt,
+                  old.state == "pending" || old == lane else { throw TokenStewardError.conflict("interactive ARC receipt") }
+            state.tasks[index].lanes[0] = lane
+        }
+    }
+
     private func recordOutcome(requestID: String, kind: TokenStewardOutcome.Kind, value: Bool, evidenceID: String) throws {
         let date = now()
         try transaction { state in
             try Self.validateID(evidenceID)
             guard let index = state.tasks.firstIndex(where: { $0.id == requestID }) else { throw TokenStewardError.missingTask }
-            guard state.tasks[index].route != "arc-evaluation" else { throw TokenStewardError.invalid("assistance outcome on a synthetic evaluation") }
+            guard !["arc-evaluation", "arc-interactive"].contains(state.tasks[index].route) else { throw TokenStewardError.invalid("assistance outcome on a synthetic evaluation") }
             if kind == .userUseful && !state.tasks[index].delivered { throw TokenStewardError.invalid("usefulness without a delivered answer") }
             if let old = state.tasks[index].outcomes.last(where: { $0.kind == kind }),
                old.evidenceID == evidenceID, old.value == value { return }
@@ -547,10 +575,11 @@ final class TokenStewardStore: ObservableObject {
         var result = TokenStewardSummary()
         result.taskCount = journal.tasks.count
         result.openTaskCount = journal.tasks.filter { !$0.isClosed }.count
-        let assistance = journal.tasks.filter { $0.route != "arc-evaluation" }
+        let assistance = journal.tasks.filter { !["arc-evaluation", "arc-interactive"].contains($0.route) }
         result.deliveredTaskCount = assistance.filter(\.delivered).count
         result.usefulTaskCount = assistance.filter(\.userUseful).count
         result.checkedSuccessfulTaskCount = assistance.filter(\.checkedSuccessful).count
+        result.interactiveSessionCount = journal.tasks.filter { $0.route == "arc-interactive" }.count
         result.evaluationTaskCount = journal.tasks.filter { $0.route == "arc-evaluation" }.count
         result.syntheticCheckedTaskCount = journal.tasks.filter {
             $0.route == "arc-evaluation" && $0.checkedSuccessful && $0.lanes.first?.admission == "synthetic-fixture"
@@ -779,6 +808,8 @@ final class TokenStewardStore: ObservableObject {
                 guard providers == [AssistantProvider.qwen.name, AssistantProvider.codex.name] else { throw TokenStewardError.invalid("Compare task lanes") }
             case "arc-evaluation":
                 guard providers == ["ARC deterministic checker"] || providers == ["ARC local symbolic solver + checker"] || providers == [ARCQwenProposalInference.provider] else { throw TokenStewardError.invalid("evaluation task lanes") }
+            case "arc-interactive":
+                guard providers == ["ARC3 offline environment"], task.outcomes.isEmpty else { throw TokenStewardError.invalid("interactive ARC task") }
             case "api": break
             default: throw TokenStewardError.invalid("task route")
             }
@@ -790,7 +821,7 @@ final class TokenStewardStore: ObservableObject {
                 }
                 if let admission = lane.admission {
                     try validateID(admission)
-                    if task.route != "arc-evaluation", !["accepted", "rejected", "stopped"].contains(admission) {
+                    if !["arc-evaluation", "arc-interactive"].contains(task.route), !["accepted", "rejected", "stopped"].contains(admission) {
                         throw TokenStewardError.invalid("lane admission status")
                     }
                 }

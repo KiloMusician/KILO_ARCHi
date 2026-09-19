@@ -122,11 +122,12 @@ struct HomeWorkspace: View {
                 .font(.system(size: 24, weight: .light)).foregroundStyle(WorkspaceTheme.accent)
             VStack(alignment: .leading, spacing: 5) {
                 Text("ARC works with ARCHi").font(.system(size: 14, weight: .medium))
-                Text("Solve an ARC task from Chat. Manage the task here and follow its checked result into Usage and your Activity map.")
+                Text("Use ARC from Chat, Work together or your Seed. Grid reasoning and interactive actions share task controls, evidence, Usage and the Activity map.")
                     .font(.system(size: 12)).foregroundStyle(WorkspaceTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
+            ARCActiveAssistantActions(store: store)
             Button("Manage ARC", systemImage: "arrow.right") { store.open(.capabilities) }
                 .buttonStyle(WorkspaceActionStyle())
                 .accessibilityIdentifier("home.arc-lab")

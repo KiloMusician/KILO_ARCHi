@@ -303,7 +303,9 @@ struct CompanionChatBubble: View {
     }
 
     @ViewBuilder private var replies: some View {
-        if store.activeARCAnswer != nil {
+        if store.showsARC3Reply {
+                        ARC3AssistantReply(store: store, session: store.arc3)
+                    } else if store.activeARCAnswer != nil {
             ARCActiveAssistantReply(store: store)
         } else if store.route == .compare {
             ComparisonReplyPanels(store: store, compact: true)

@@ -5,13 +5,19 @@ extension CompanionStore {
     /// A current projection of existing owners. Reading the graph never dispatches,
     /// saves, moves the companion or reconstructs withdrawn historical text.
     func companionGraphSnapshot(at now: Date = Date()) -> CompanionGraphSnapshot {
-        CompanionGraph.build(
+        let base = CompanionGraph.build(
             receipts: compareResults.values.compactMap(\.receipt),
             lessons: keptLessons,
             source: sourceName.map { CompanionGraphSource(name: $0, text: sharedText, revision: sourceRevision) },
             now: now, records: hamptonSnapshot.records, turn: hamptonSnapshot.turn,
             arcRecords: arcCapabilities.records, arcError: arcCapabilities.lastError,
             accountingTasks: tokenSteward.tasks, accountingError: tokenSteward.loadError)
+        let recordedSummary = lastARC3Summary.flatMap { summary in
+            tokenSteward.loadError == nil && tokenSteward.tasks.contains {
+                $0.id == summary.sessionID && $0.route == "arc-interactive" && $0.startedAt == summary.startedAt
+            } ? summary : nil
+        }
+        return ARC3Graph.append(to: base, observation: arc3.observation, transitions: arc3.transitions, summary: recordedSummary)
     }
 
     func openGraphTarget(_ target: CompanionGraphTarget) {
@@ -22,6 +28,7 @@ extension CompanionStore {
         case .advanced: open(.advanced)
         case .capabilities: open(.capabilities)
         case .steward: open(.steward)
+        case .interactiveARC: runARC3(.open)
         case .stewardTask(let taskID): openARCUsage(taskID: taskID)
         case .arcEvidence(let proposalHash):
             arcCapabilities.selectRecord(id: proposalHash)

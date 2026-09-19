@@ -341,7 +341,9 @@ struct WorkTogetherWorkspace: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(12).background(WorkspaceTheme.accent.opacity(0.14), in: RoundedRectangle(cornerRadius: 10))
                     }
-                    if store.activeARCAnswer != nil {
+                    if store.showsARC3Reply {
+                        ARC3AssistantReply(store: store, session: store.arc3)
+                    } else if store.activeARCAnswer != nil {
                         ARCActiveAssistantReply(store: store)
                     } else if store.compareResults.isEmpty {
                         reviewIntroduction

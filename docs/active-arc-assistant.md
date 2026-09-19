@@ -14,7 +14,7 @@ Hampton's existing separation between proposal, execution, verification and acce
 
 ## Scope and next capability layers
 
-This increment activates the current grid-task capability. It does not implement unrestricted autonomous planning, interactive ARC3, complete Q2E, or the performance of a frontier model on ARC Prize. The unavailable proposer-evolution-v4 report remains an evidence gap. Imported research and benchmarks must retain their own provenance and evaluation conditions.
+This increment activates the current grid-task capability. The subsequent [interactive ARC3 increment](active-arc3.md) adds installed offline public environments, bounded actions, actual observations, and task-local transition predictions through the same native task surface. Neither increment establishes unrestricted autonomous planning, complete Q2E, or the performance of a frontier model on ARC Prize. The unavailable proposer-evolution-v4 report remains an evidence gap. Imported research and benchmarks must retain their own provenance and evaluation conditions.
 
 The Astra and Astra-for-Law comparison motivates the next layers: versioned domain capability packs with explicit inputs, supported operations and native verifiers; then a revision-aware job registry for multiple dependent tasks. Any premium external proposer remains separately configured, explicitly selected, cost-reserved and independently checked. Domain retrieval, inference quality, task verification and authorization are separate responsibilities. A model upgrade does not replace these contracts.
 

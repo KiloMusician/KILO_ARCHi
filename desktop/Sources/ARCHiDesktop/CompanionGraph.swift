@@ -35,7 +35,7 @@ enum CompanionGraphKind: String, CaseIterable, Identifiable, Sendable {
 }
 
 enum CompanionGraphTarget: Equatable, Sendable {
-    case assistant, context, memory, advanced, capabilities, steward
+    case assistant, context, memory, advanced, capabilities, steward, interactiveARC
     case arcEvidence(proposalHash: String)
     case stewardTask(taskID: String)
 }

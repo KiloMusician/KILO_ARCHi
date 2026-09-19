@@ -516,6 +516,7 @@ struct CompanionGraphView: View {
         case .memory: "Open memory"
         case .advanced: "Open local receipts"
         case .capabilities: "Open ARC"
+        case .interactiveARC: "Open ARC3 episode"
         case .arcEvidence: "Open this ARC receipt"
         case .steward: "Open Usage"
         case .stewardTask: "Open this run in Usage"

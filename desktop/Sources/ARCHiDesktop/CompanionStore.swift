@@ -97,6 +97,9 @@ struct ContextTicket: Equatable, Sendable {
 final class CompanionStore: ObservableObject {
     let tokenSteward: TokenStewardStore
     let arcCapabilities: ARCCapabilitiesStore
+    let arc3: ARC3SessionStore
+    @Published private(set) var showsARC3Reply = false
+    @Published private(set) var lastARC3Summary: ARC3SessionSummary?
     @Published private(set) var stewardMessage: String?
     /// Navigation focus is transient and never enters a profile or usage journal.
     @Published private(set) var selectedStewardTaskID: String?
@@ -105,6 +108,7 @@ final class CompanionStore: ObservableObject {
     private var pendingStewardReceipts: [String: AssistantLaneReceipt] = [:]
     private var pendingStewardEvaluations: [String: ARCCapabilitiesEvent] = [:]
     private var pendingStewardUseful: Set<String> = []
+    private var pendingARC3Summaries: [String: ARC3SessionSummary] = [:]
     /// Desktop delivery may suspend the game without altering its saved data.
     let allowsPlay: Bool
     @Published var section: WorkspaceSection = .home {
@@ -409,6 +413,7 @@ final class CompanionStore: ObservableObject {
     }
 
     var nextCallBudget: String {
+        if arc3CommandSelected { return "0 model calls · bounded local ARC3 environment actions" }
         if let selection = ARCActiveAssistant.select(prompt) {
             return selection == .command(.propose)
                 ? "At most 1 local Qwen proposal call · no external requests"
@@ -423,8 +428,9 @@ final class CompanionStore: ObservableObject {
         }
     }
 
-    var arcCommandSelected: Bool { ARCActiveAssistant.select(prompt) != nil }
-    var isARCWorking: Bool { activeARCOwner != nil }
+    var arc3CommandSelected: Bool { ARC3AssistantCommand.select(prompt) != nil }
+    var arcCommandSelected: Bool { ARCActiveAssistant.select(prompt) != nil || arc3CommandSelected }
+    var isARCWorking: Bool { activeARCOwner != nil || arc3.isWorking }
     var canBeginReply: Bool { !isShuttingDown && !voiceInput.isActive
         && (arcCommandSelected || (canShareDesktopInterestWithRoute && (route == .automatic || connectionState == .ready))) }
 
@@ -456,6 +462,8 @@ final class CompanionStore: ObservableObject {
     func startNewLocalConversation() {
         guard !isShuttingDown else { return }
         cancelActiveARC(reason: "New conversation.")
+        arc3.stop(reason: "New conversation.")
+        showsARC3Reply = false
         clearSessionContext()
         localConversationNotice = "New local conversation. Your draft, shared copy and kept lessons are unchanged."
         if assistantProvider == .qwen { reply = "What would you like to work on?" }
@@ -479,7 +487,7 @@ final class CompanionStore: ObservableObject {
          monotonicTime: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
          wallClock: @escaping () -> Date = Date.init, allowsPlay: Bool = true,
          voiceInput: VoiceInputController? = nil, interestReader: (any DesktopInterestReading)? = nil,
-         tokenSteward: TokenStewardStore? = nil, arcCapabilities: ARCCapabilitiesStore? = nil) {
+         tokenSteward: TokenStewardStore? = nil, arcCapabilities: ARCCapabilitiesStore? = nil, arc3: ARC3SessionStore? = nil) {
         self.voiceInput = voiceInput ?? VoiceInputController()
         self.desktopInterest = DesktopInterestSession(reader: interestReader)
         self.allowsPlay = allowsPlay
@@ -495,6 +503,7 @@ final class CompanionStore: ObservableObject {
         self.preferenceURL = resolvedPreferenceURL
         self.tokenSteward = tokenSteward ?? TokenStewardStore(url: resolvedPreferenceURL.deletingPathExtension().appendingPathExtension("steward.json"))
         self.arcCapabilities = arcCapabilities ?? ARCCapabilitiesStore(storageURL: resolvedPreferenceURL.deletingPathExtension().appendingPathExtension("arc.json"))
+        self.arc3 = arc3 ?? ARC3SessionStore(outputDirectory: resolvedPreferenceURL.deletingLastPathComponent().appendingPathComponent("ARC3Episodes", isDirectory: true))
         // A prepared recovery journal is resolved before either saved owner is
         // admitted. A conflicting interrupted restore leaves both owners closed.
         let startupRecoveryBlock = DesktopRecoveryStartup.recoverIfNeeded(at: resolvedPreferenceURL)
@@ -528,6 +537,20 @@ final class CompanionStore: ObservableObject {
             .store(in: &evolutionSubscriptions)
         self.arcCapabilities.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }
             .store(in: &evolutionSubscriptions)
+        self.arc3.objectWillChange.receive(on: RunLoop.main).sink { [weak self] in
+            guard let self else { return }
+            self.objectWillChange.send()
+            self.isWorking = !self.replyOwners.isEmpty || self.activeARCOwner != nil || self.arc3.isWorking
+            if self.showsARC3Reply { self.status = self.arc3.status }
+        }.store(in: &evolutionSubscriptions)
+        self.arc3.onFinished = { [weak self] summary in
+            guard let self else { return }
+            self.lastARC3Summary = summary
+            self.pendingARC3Summaries[summary.sessionID] = summary
+            do { try self.retryStewardReceipts(); self.stewardMessage = nil }
+            catch { self.stewardMessage = "ARC3 episode retained; Usage needs attention: \(error.localizedDescription)" }
+        }
+
         reactor.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }
             .store(in: &evolutionSubscriptions)
         self.voiceInput.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }
@@ -582,7 +605,7 @@ final class CompanionStore: ObservableObject {
     @discardableResult
     func openARCUsage(taskID: String) -> Bool {
         let available = tokenSteward.loadError == nil && tokenSteward.tasks.contains {
-            $0.id == taskID && $0.route == "arc-evaluation"
+            $0.id == taskID && ["arc-evaluation", "arc-interactive"].contains($0.route)
         }
         selectedStewardTaskID = available ? taskID : nil
         open(.steward)
@@ -602,11 +625,17 @@ final class CompanionStore: ObservableObject {
     }
 
     func canOpenARCEvidenceForUsage(taskID: String) -> Bool {
-        arcEvidenceForUsage(taskID: taskID) != nil
+        currentARC3EvidenceMatches(taskID) || arcEvidenceForUsage(taskID: taskID) != nil
     }
 
-    @discardableResult
+    private func currentARC3EvidenceMatches(_ taskID: String) -> Bool {
+        tokenSteward.loadError == nil && lastARC3Summary?.sessionID == taskID
+            && lastARC3Summary?.receiptURL == arc3.receiptURL && arc3.receiptURL != nil
+            && tokenSteward.tasks.contains { $0.id == taskID && $0.route == "arc-interactive" }
+    }
+
     func openARCEvidenceForUsage(taskID: String) -> Bool {
+        if currentARC3EvidenceMatches(taskID) { return runARC3(.open) }
         guard let record = arcEvidenceForUsage(taskID: taskID) else {
             let notice = "This usage task has no matching ARC result available in the current profile. No replacement was selected."
             arcCapabilities.clearRecordSelection(notice: notice)
@@ -1099,6 +1128,8 @@ final class CompanionStore: ObservableObject {
         let hadDerivedReply = !compareResults.isEmpty || hamptonSnapshot.proposal != nil || activeARCAnswer != nil
         workGeneration &+= 1
         cancelActiveARC(reason: reason, keepAnswer: reason == "Stopped.")
+        arc3.stop(reason: reason)
+        if reason != "Stopped." { showsARC3Reply = false }
         for provider in Array(replyOwners.keys) { cancelLane(provider, reason: reason) }
         // Completed lanes are also bound to the superseded request ticket.
         for provider in Array(compareResults.keys) {
@@ -1120,6 +1151,46 @@ final class CompanionStore: ObservableObject {
     }
 
     func submit() { _ = submit(question: prompt, pointing: nil) }
+
+    @discardableResult
+    func prepareARC3Action() -> Bool {
+        guard !isShuttingDown, !voiceInput.isActive else { return false }
+        if !replyOwners.isEmpty || activeARCOwner != nil { cancelWork(reason: "ARC3 replaces earlier work.") }
+        arcCapabilities.stopSolving()
+        activeARCAnswer = nil
+        compareResults = [:]
+        if !arc3.isSessionActive { lastARC3Summary = nil }
+        showsARC3Reply = true
+        return true
+    }
+
+    @discardableResult
+    func runARC3(_ command: ARC3AssistantCommand) -> Bool {
+        guard !isShuttingDown else { return false }
+        if command == .stop {
+            arc3.stop(reason: "Stopped by you.")
+            showsARC3Reply = true
+            return true
+        }
+        guard !voiceInput.isActive else { status = "Finish dictation before using ARC3."; return false }
+        switch command {
+        case .open:
+            showsARC3Reply = true
+            open(.capabilities)
+            if arc3.games.isEmpty, !arc3.isWorking, !arc3.isSessionActive { arc3.discover() }
+        case .explore:
+            guard !arc3.isWorking else { return false }
+            guard prepareARC3Action() else { return false }
+            arc3.explore(maxActions: 8)
+        case .invalid:
+            cancelWork(reason: "Invalid ARC3 command. No new action dispatched.")
+            status = "Use /arc3 open, /arc3 explore, or /arc3 stop."
+            reply = status
+            return false
+        case .stop: break
+        }
+        return true
+    }
 
     /// Native assistant dispatch. This reuses the profile's existing ARC owner,
     /// evaluator, evidence shelf and Usage path; no model lane is synthesized.
@@ -1236,12 +1307,13 @@ final class CompanionStore: ObservableObject {
     }
 
     private func invalidateActiveARCSource() {
-        guard activeARCOwner != nil || activeARCAnswer != nil else { return }
+        guard activeARCOwner != nil || activeARCAnswer != nil || arc3.isWorking || arc3.isSessionActive else { return }
         cancelWork(reason: "Shared source changed. The earlier ARC answer was cleared.")
     }
 
     private func submit(question: String, pointing: AssistantPointingSnapshot?) -> Bool {
         guard !isShuttingDown else { return false }
+        if pointing == nil, let command = ARC3AssistantCommand.select(question) { return runARC3(command) }
         if pointing == nil, let selection = ARCActiveAssistant.select(question) {
             guard !voiceInput.isActive else {
                 status = "Finish or cancel voice input before starting ARC."; return false
@@ -1729,6 +1801,7 @@ final class CompanionStore: ObservableObject {
 
     private func cancelLocalWork(reason: String) {
         cancelActiveARC(reason: reason)
+        arc3.stop(reason: reason)
         let hadLocalWork = replyOwners[.qwen] != nil
         cancelLane(.qwen, reason: reason)
         if hadLocalWork && !isWorking && route == .local { workGeneration &+= 1 }
@@ -1794,6 +1867,10 @@ final class CompanionStore: ObservableObject {
                 localSolver: event.localSolver, cancelled: event.cancelled,
                 proposalInference: event.proposalInference, proposalInProgress: event.proposalInProgress)
             pendingStewardEvaluations[key] = nil
+        }
+        for (key, summary) in pendingARC3Summaries {
+            try tokenSteward.recordInteractiveARC(summary)
+            pendingARC3Summaries[key] = nil
         }
         for requestID in pendingStewardUseful {
             try tokenSteward.recordUseful(requestID: requestID)
@@ -2412,6 +2489,8 @@ extension CompanionStore {
     func admitRestoredProfile() throws {
         let loaded = try NativePreferencePersistence.read(preferenceURL)
         cancelWork(reason: "Saved profile restored. Earlier replies and references cleared.")
+        arc3.resetForProfile()
+        lastARC3Summary = nil
         clearSessionContext()
         compareResults = [:]
         invalidateTextSelection(reason: "Saved profile restored. Select a passage again.")

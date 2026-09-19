@@ -96,6 +96,7 @@ struct TokenStewardWorkspace: View {
                 LabeledContent("Answers delivered", value: "\(store.summary.deliveredTaskCount)")
                 LabeledContent("Marked useful by you", value: "\(store.summary.usefulTaskCount)")
                 LabeledContent("Separately checked successes", value: "\(store.summary.checkedSuccessfulTaskCount)")
+                LabeledContent("Interactive ARC3 sessions", value: "\(store.summary.interactiveSessionCount)")
                 LabeledContent("Offline ARC evaluations", value: "\(store.summary.evaluationTaskCount)")
                 LabeledContent("Synthetic ARC checks passed", value: "\(store.summary.syntheticCheckedTaskCount)")
                 LabeledContent("API cost per useful task", value: store.summary.apiCostPerUsefulTaskNanoUSD.map(TokenStewardPresentation.money) ?? "Not available")
@@ -141,7 +142,7 @@ struct TokenStewardWorkspace: View {
                 ForEach(TokenStewardPresentation.visibleTasks(store.tasks, selectedTaskID: selectedTaskID)) { task in
                     VStack(alignment: .leading, spacing: 4) {
                         HStack {
-                            Text(task.route == "arc-evaluation" ? "ARC evaluation" : task.route).fontWeight(.medium)
+                            Text(task.route == "arc-interactive" ? "ARC3 session" : task.route == "arc-evaluation" ? "ARC evaluation" : task.route).fontWeight(.medium)
                             Spacer()
                             Text(task.isClosed ? "Finished" : "Open / interrupted").foregroundStyle(.secondary)
                         }
@@ -152,8 +153,9 @@ struct TokenStewardWorkspace: View {
                         }
                         Text(task.startedAt.formatted(date: .abbreviated, time: .shortened)).font(.caption)
                         Text(task.id).font(.system(size: 10, design: .monospaced)).textSelection(.enabled)
-                        Text(task.route == "arc-evaluation" ? "Offline evaluation · \(task.checkedSuccessful ? "all examples exact" : "not all examples exact or evaluation failed")" : task.userUseful ? "Marked useful" : task.delivered ? "Answer delivered · usefulness not assessed" : "No completed answer")
+                        Text(task.route == "arc-interactive" ? "Local environment session · no model calls · not an assistant answer" : task.route == "arc-evaluation" ? "Offline evaluation · \(task.checkedSuccessful ? "all examples exact" : "not all examples exact or evaluation failed")" : task.userUseful ? "Marked useful" : task.delivered ? "Answer delivered · usefulness not assessed" : "No completed answer")
                             .font(.caption).foregroundStyle(.secondary)
+                        if task.route == "arc-interactive", let detail = task.lanes.first?.admission { Text(detail).font(.caption).foregroundStyle(.secondary) }
                         ForEach(task.lanes) { lane in
                             Text("\(lane.provider) · \(lane.state)" + (lane.elapsedMilliseconds.map { " · \($0) ms" } ?? ""))
                                 .font(.caption).foregroundStyle(.secondary)

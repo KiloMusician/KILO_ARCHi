@@ -111,6 +111,9 @@ cp -R "$REPO_ROOT/desktop/Sources/ARCHiDesktop/Resources/Branding" "$BUNDLE_DIR/
 cp "$BUNDLE_DIR/Contents/Resources/Branding/AppIcon.icns" "$BUNDLE_DIR/Contents/Resources/AppIcon.icns"
 mkdir -p "$BUNDLE_DIR/Contents/Resources/ReactorBridge"
 cp "$REPO_ROOT/desktop/Sources/ARCHiDesktop/Resources/ReactorBridge/worker.py" "$BUNDLE_DIR/Contents/Resources/ReactorBridge/worker.py"
+mkdir -p "$BUNDLE_DIR/Contents/Resources/ARC3Bridge"
+cp "$REPO_ROOT/desktop/Sources/ARCHiDesktop/Resources/ARC3Bridge/archi_arc3_bridge.py" "$BUNDLE_DIR/Contents/Resources/ARC3Bridge/archi_arc3_bridge.py"
+test -s "$BUNDLE_DIR/Contents/Resources/ARC3Bridge/archi_arc3_bridge.py"
 if [[ -n "$UNITY_PLAYER" ]]; then
     [[ -d "$UNITY_PLAYER" && "$UNITY_PLAYER" == *.app ]] || { echo "Unity player must be an existing app bundle." >&2; exit 2; }
     # The qualified player may be exposed through an output symlink. Resolve
@@ -147,7 +150,7 @@ cat > "$BUNDLE_DIR/Contents/Info.plist" <<PLIST
 <key>CFBundleDisplayName</key><string>$APP_NAME</string>
 <key>CFBundleIconFile</key><string>AppIcon</string>
 <key>CFBundleVersion</key><string>1</string>
-<key>CFBundleShortVersionString</key><string>0.7.0</string>
+<key>CFBundleShortVersionString</key><string>0.1.0</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>NSPrincipalClass</key><string>NSApplication</string>
 <key>NSHighResolutionCapable</key><true/>
