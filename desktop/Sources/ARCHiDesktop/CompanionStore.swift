@@ -606,7 +606,9 @@ final class CompanionStore: ObservableObject {
             // The journal is shared across profiles. A matching evidence hash alone
             // cannot establish ownership of an older replay or another profile's task.
             let currentRunMatches = current?.taskID == taskID && current?.evidenceID == record.id && current?.error == nil
-            guard record.taskID == taskID || currentRunMatches else { return false }
+            let proposal = arcCapabilities.qwenProposalReview
+            let currentProposalMatches = proposal?.taskID == taskID && proposal?.evidenceID == record.id && proposal?.error == nil
+            guard record.taskID == taskID || currentRunMatches || currentProposalMatches else { return false }
             return task.outcomes.contains {
                 $0.kind == .checked && $0.evidenceID == record.id && $0.value == record.summary.allExact
             }
@@ -1408,6 +1410,7 @@ final class CompanionStore: ObservableObject {
 
     func selectQwenModel(_ model: String) {
         guard !isShuttingDown, QwenAssistant.supportedModels.contains(model), model != qwenModel else { return }
+        arcCapabilities.stopQwenProposal(reason: "Local Qwen model changed.")
         qwenModel = model
         replaceLocalAssistant()
     }
@@ -1630,7 +1633,8 @@ final class CompanionStore: ObservableObject {
             try tokenSteward.recordEvaluation(taskID: event.taskID, evidenceID: event.evidenceID,
                 passed: event.passed, startedAt: event.startedAt, finishedAt: event.finishedAt,
                 sourceStatus: event.sourceStatus, error: event.error,
-                localSolver: event.localSolver, cancelled: event.cancelled)
+                localSolver: event.localSolver, cancelled: event.cancelled,
+                proposalInference: event.proposalInference, proposalInProgress: event.proposalInProgress)
             pendingStewardEvaluations[key] = nil
         }
         for requestID in pendingStewardUseful {

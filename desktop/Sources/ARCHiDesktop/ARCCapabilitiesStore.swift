@@ -13,6 +13,8 @@ struct ARCCapabilitiesEvent: Sendable {
     let error: String?
     var localSolver = false
     var cancelled = false
+    var proposalInference: ARCQwenProposalInference? = nil
+    var proposalInProgress = false
 }
 
 struct ARCCapabilitiesRecord: Identifiable, Sendable {
@@ -26,7 +28,8 @@ struct ARCCapabilitiesRecord: Identifiable, Sendable {
 }
 
 /// A profile-scoped evidence shelf. Every reopen scores the raw bundle again.
-/// This owner has no access to evolution, permissions, memories or model dispatch.
+/// This owner has no access to evolution, permissions or memories. Local proposal
+/// generation is a separate explicit request through a bounded Qwen client.
 @MainActor
 final class ARCCapabilitiesStore: ObservableObject {
     @Published private(set) var records: [ARCCapabilitiesRecord] = []
@@ -38,6 +41,11 @@ final class ARCCapabilitiesStore: ObservableObject {
     @Published private(set) var solverReview: ARCSolverReview?
     @Published private(set) var isSolving = false
     @Published private(set) var solverStatus = "Choose a task or load the rotation sample."
+    @Published private(set) var qwenProposalStatus = "Ask local Qwen for one bounded rule proposal."
+    @Published private(set) var qwenProposalReview: ARCQwenProposalReview?
+    @Published private(set) var isProposing = false
+    let qwenProposalClientFactory: @MainActor (String) -> any ARCQwenProposalClient
+    var qwenProposalOwner: ARCQwenProposalSession?
     private let solverExecutor: @Sendable (ARCSolverInput, ARCSolverConfiguration) async throws -> ARCSolverExecution
     private var solverWorker: Task<ARCSolverExecution, Error>?
     private var solverOwner: SolverOwner?
@@ -80,9 +88,11 @@ final class ARCCapabilitiesStore: ObservableObject {
     }
 
     init(storageURL: URL? = nil,
-         solverExecutor: @escaping @Sendable (ARCSolverInput, ARCSolverConfiguration) async throws -> ARCSolverExecution = ARCSolverExecution.local) {
+         solverExecutor: @escaping @Sendable (ARCSolverInput, ARCSolverConfiguration) async throws -> ARCSolverExecution = ARCSolverExecution.local,
+         qwenProposalClientFactory: @escaping @MainActor (String) -> any ARCQwenProposalClient = { QwenAssistant(model: $0) }) {
         self.storageURL = storageURL
         self.solverExecutor = solverExecutor
+        self.qwenProposalClientFactory = qwenProposalClientFactory
         guard let storageURL, FileManager.default.fileExists(atPath: storageURL.path) else { return }
         do {
             let values = try storageURL.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
@@ -109,6 +119,34 @@ final class ARCCapabilitiesStore: ObservableObject {
             lastError = "Saved ARC evidence could not be checked: \(error.localizedDescription) The original file has been preserved."
             storageNeedsRecovery = true
         }
+    }
+
+    func updateQwenProposal(status: String, review: ARCQwenProposalReview?, isProposing: Bool) {
+        qwenProposalStatus = status
+        qwenProposalReview = review
+        self.isProposing = isProposing
+    }
+
+    func prepareQwenProposal() -> ARCSolverDocument? {
+        guard !isProposing else { return nil }
+        guard let document = solverDocument else {
+            qwenProposalStatus = "Choose a task first."
+            return nil
+        }
+        guard !storageNeedsRecovery else {
+            qwenProposalStatus = "Repair or restore the preserved evidence archive before proposing."
+            return nil
+        }
+        stopSolving(reason: "Replaced by a local Qwen proposal.")
+        solverReview = nil
+        return document
+    }
+
+    func retainQwenProposal(bundle: Data, ownerID: UUID, startedAt: Date) -> ARCCapabilitiesEvent? {
+        guard qwenProposalOwner?.id == ownerID else { return nil }
+        // Owner check, independent checker and archive commit share one actor
+        // turn; cancelled or replaced work cannot publish a late proposal.
+        return retainEvaluation(data: bundle, taskID: ownerID.uuidString, startedAt: startedAt)
     }
 
     @discardableResult
@@ -230,6 +268,7 @@ extension ARCCapabilitiesStore {
         let document = try ARCSolverDocument.parse(data, name: name)
         solverDocument = document
         solverReview = nil
+        updateQwenProposal(status: "Task ready for one local Qwen proposal.", review: nil, isProposing: false)
         solverStatus = "Task ready. Expected test outputs, if present, are reserved for the checker."
     }
 
@@ -237,6 +276,7 @@ extension ARCCapabilitiesStore {
         stopSolving(reason: "Task replaced.")
         solverDocument = try ARCSolverDocument.parse(ARCSolverDocument.sample, name: "Synthetic rotation sample", isSynthetic: true)
         solverReview = nil
+        updateQwenProposal(status: "Synthetic sample ready for one local Qwen proposal.", review: nil, isProposing: false)
         solverStatus = "Synthetic sample ready. Solve locally to generate a new prediction."
     }
 
@@ -260,6 +300,8 @@ extension ARCCapabilitiesStore {
                               configuration: ARCSolverConfiguration = .standard,
                               onEvaluation: @escaping @MainActor (ARCCapabilitiesEvent) -> Void) {
         guard !isSolving else { return }
+        stopQwenProposal(reason: "Symbolic solve started.")
+        updateQwenProposal(status: "Ask local Qwen for one bounded rule proposal.", review: nil, isProposing: false)
         guard !storageNeedsRecovery else {
             solverStatus = "Repair or restore the preserved evidence archive before solving."
             return
@@ -322,6 +364,7 @@ extension ARCCapabilitiesStore {
     func stopSolving() { stopSolving(reason: "Stopped.") }
 
     private func stopSolving(reason: String) {
+        stopQwenProposal(reason: reason)
         guard let owner = solverOwner else { return }
         // Retire ownership synchronously; even an executor ignoring cancellation
         // cannot revive a stopped task or write into the next task's archive.

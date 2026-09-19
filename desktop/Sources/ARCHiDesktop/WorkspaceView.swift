@@ -62,7 +62,7 @@ struct WorkspaceView: View {
                 } else if store.section == .capabilities {
                     ARCCapabilitiesWorkspace(store: store.arcCapabilities, onEvaluation: store.recordARCEvaluation,
                         onOpenUsage: { _ = store.openARCUsage(taskID: $0) },
-                        onOpenGraph: { _ = store.openARCGraph(evidenceID: $0) })
+                        onOpenGraph: { _ = store.openARCGraph(evidenceID: $0) }, qwenModel: store.qwenModel)
                 } else if store.section == .play && store.allowsPlay {
                     PlayWorkspace(store: store, host: playHost)
                 } else {

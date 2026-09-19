@@ -237,6 +237,77 @@ enum ARCSymbolicSolver {
         }
     }
 
+    /// A separately admitted single proposal. This does not enter the catalog,
+    /// establish catalog consensus, or change historical symbolic replay.
+    static func evaluateProposal(
+        _ input: ARCSolverInput, steps: [ARCProposalOperation], learnPalette: Bool,
+        isCancelled: @Sendable () -> Bool = { false }
+    ) throws -> ARCProposalEvaluation {
+        try checkCancellation(isCancelled)
+        guard steps.count <= 3 else { throw ARCSolverError.invalidConfiguration("A proposal supports at most three operations.") }
+        let operations = try steps.map { operation -> Step in
+            guard let step = Step(rawValue: operation.rawValue) else {
+                throw ARCSolverError.invalidConfiguration("Unsupported proposal operation.")
+            }
+            return step
+        }
+        var budget = Budget(limit: 2_000_000), passed = 0
+        func result(_ status: ARCProposalStatus, predictions: [ARCGrid]? = nil) -> ARCProposalEvaluation {
+            .init(status: status, trainingPassed: passed, trainingCount: input.training.count,
+                  predictions: predictions, cellOperations: budget.used)
+        }
+        do {
+            try validate(input, budget: &budget, isCancelled: isCancelled)
+            var palette = [Int?](repeating: nil, count: 10)
+            var failure: ARCProposalStatus?
+            // Visit every training pair, even after a rejection. Test transforms
+            // remain unreachable unless the entire training set passes.
+            for example in input.training {
+                try checkCancellation(isCancelled)
+                guard let transformed = try transform(example.input, steps: operations, budget: &budget, isCancelled: isCancelled) else {
+                    failure = failure ?? .trainingUndefined
+                    continue
+                }
+                guard sameDimensions(transformed, example.output) else {
+                    failure = failure ?? .trainingMismatch
+                    continue
+                }
+                let matches: Bool
+                if learnPalette {
+                    matches = try extendPalette(&palette, source: transformed, target: example.output, budget: &budget, isCancelled: isCancelled)
+                } else {
+                    matches = try equal(transformed, example.output, budget: &budget, isCancelled: isCancelled)
+                }
+                if matches { passed += 1 } else { failure = failure ?? .trainingMismatch }
+            }
+            if let failure { return result(failure) }
+            var predictions: [ARCGrid] = []
+            for test in input.testInputs {
+                try checkCancellation(isCancelled)
+                guard var prediction = try transform(test, steps: operations, budget: &budget, isCancelled: isCancelled) else {
+                    return result(.predictionUndefined)
+                }
+                if learnPalette {
+                    guard let mapped = try applyPalette(palette, to: prediction, budget: &budget, isCancelled: isCancelled) else {
+                        return result(.predictionUndefined)
+                    }
+                    prediction = mapped
+                }
+                predictions.append(prediction)
+            }
+            try checkCancellation(isCancelled)
+            return result(.predicted, predictions: predictions)
+        } catch is BudgetExhausted {
+            return result(.budgetExhausted)
+        }
+    }
+
+    /// Input-only preflight for the proposal request; no candidate is executed.
+    static func validateProposalInput(_ input: ARCSolverInput, isCancelled: @Sendable () -> Bool = { false }) throws {
+        var budget = Budget(limit: 2_000_000)
+        try validate(input, budget: &budget, isCancelled: isCancelled)
+    }
+
     private enum Step: String, CaseIterable, Sendable {
         case rotate90, rotate180, rotate270, reflectRows, reflectColumns, transpose, antiTranspose
         case cropNonzero, scale2, scale3, tile2, tile3

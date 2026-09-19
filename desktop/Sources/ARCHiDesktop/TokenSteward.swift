@@ -277,27 +277,56 @@ final class TokenStewardStore: ObservableObject {
         try recordOutcome(requestID: requestID, kind: .checked, value: passed, evidenceID: evidenceID)
     }
 
-    /// Local solving and offline rescoring share an evaluation task category. It contributes no model calls,
-    /// paid cost, user-useful answers or certified capability state.
+    /// Evaluation does not grant useful-answer or capability state. A local Qwen
+    /// proposal additionally records its one observed inference, without billing.
     func recordEvaluation(taskID: String, evidenceID: String?, passed: Bool?,
                           startedAt: Date, finishedAt: Date, sourceStatus: String?, error: String?,
-                          localSolver: Bool = false, cancelled: Bool = false) throws {
+                          localSolver: Bool = false, cancelled: Bool = false,
+                          proposalInference: ARCQwenProposalInference? = nil, proposalInProgress: Bool = false) throws {
         guard startedAt.timeIntervalSince1970.isFinite, finishedAt.timeIntervalSince1970.isFinite,
               finishedAt >= startedAt, finishedAt.timeIntervalSince(startedAt) <= Double(Int.max / 1000)
         else { throw TokenStewardError.invalid("evaluation duration") }
         guard !cancelled || (evidenceID == nil && passed == nil) else { throw TokenStewardError.invalid("cancelled evaluation evidence") }
-        let provider = localSolver ? "ARC local symbolic solver + checker" : "ARC deterministic checker"
+        guard !(localSolver && proposalInference != nil),
+              !proposalInProgress || (proposalInference != nil && evidenceID == nil && passed == nil && error == nil && !cancelled)
+        else { throw TokenStewardError.invalid("proposal evaluation phase") }
+        if let inference = proposalInference {
+            guard QwenAssistant.supportedModels.contains(inference.model),
+                  ["not-started", "dispatched", "complete", "failed", "cancelled"].contains(inference.outcome),
+                  inference.inputTokens.map({ $0 >= 0 }) != false,
+                  inference.outputTokens.map({ $0 >= 0 }) != false,
+                  inference.elapsedMilliseconds.map({ $0 >= 0 }) != false,
+                  inference.attempted || (inference.inputTokens == nil && inference.outputTokens == nil && inference.elapsedMilliseconds == nil)
+            else { throw TokenStewardError.invalid("local proposal observation") }
+        }
+        let provider = proposalInference != nil ? ARCQwenProposalInference.provider
+            : (localSolver ? "ARC local symbolic solver + checker" : "ARC deterministic checker")
         try transaction { state in
             try Self.registerTask(id: taskID, route: "arc-evaluation", providers: [provider], date: startedAt, in: &state)
             let index = state.tasks.firstIndex { $0.id == taskID }!
-            let lane = TokenStewardLane(provider: provider, dispatched: true,
-                state: cancelled ? "cancelled" : (error == nil && passed != nil ? "complete" : "failed"), admission: sourceStatus,
-                elapsedMilliseconds: Int(finishedAt.timeIntervalSince(startedAt) * 1000))
+            let oldLane = state.tasks[index].lanes[0]
+            let lane = TokenStewardLane(provider: provider,
+                dispatched: proposalInference?.attempted ?? true,
+                state: proposalInProgress ? "pending" : (cancelled ? "cancelled" : (error == nil && passed != nil ? "complete" : "failed")),
+                admission: sourceStatus,
+                elapsedMilliseconds: proposalInProgress ? nil : Int(finishedAt.timeIntervalSince(startedAt) * 1000),
+                localAttemptsMeasured: proposalInference != nil && !proposalInProgress)
             guard state.tasks[index].startedAt == startedAt,
-                  state.tasks[index].lanes[0].state == "pending" || state.tasks[index].lanes[0] == lane
+                  !oldLane.dispatched || lane.dispatched,
+                  oldLane.state == "pending" || oldLane == lane
             else { throw TokenStewardError.conflict("evaluation receipt") }
+            if !proposalInProgress, let inference = proposalInference, inference.attempted {
+                try Self.importObservation(TokenStewardObservation(
+                    id: Self.nativeObservationID(taskID, provider, "proposal"), taskID: taskID, provider: provider,
+                    resource: .localInference, observedAt: startedAt,
+                    model: inference.model, role: "ARC_PROPOSAL", outcome: inference.outcome,
+                    inputDigest: inference.inputDigest,
+                    inputTokens: inference.inputTokens.flatMap(Int64.init(exactly:)),
+                    outputTokens: inference.outputTokens.flatMap(Int64.init(exactly:)),
+                    elapsedMilliseconds: inference.elapsedMilliseconds.flatMap(Int64.init(exactly:))), into: &state)
+            }
             state.tasks[index].lanes[0] = lane
-            if error == nil, let passed, let evidenceID {
+            if !proposalInProgress, error == nil, let passed, let evidenceID {
                 try Self.validateID(evidenceID)
                 if let old = state.tasks[index].outcomes.first(where: { $0.kind == .checked }) {
                     guard old.evidenceID == evidenceID, old.value == passed else { throw TokenStewardError.conflict("evaluation evidence") }
@@ -528,7 +557,7 @@ final class TokenStewardStore: ObservableObject {
         }.count
         result.localAttemptCount = journal.observations.filter { $0.resource == .localInference }.count
         result.unmeasuredLocalLaneCount = journal.tasks.flatMap(\.lanes).filter {
-            $0.provider == AssistantProvider.qwen.name && $0.dispatched && !$0.localAttemptsMeasured
+            [AssistantProvider.qwen.name, ARCQwenProposalInference.provider].contains($0.provider) && $0.dispatched && !$0.localAttemptsMeasured
         }.count
         // Durable dispatch counts include an interrupted request with no receipt.
         result.subscriptionRequestCount = journal.tasks.flatMap(\.lanes).filter {
@@ -749,14 +778,14 @@ final class TokenStewardStore: ObservableObject {
             case "compare":
                 guard providers == [AssistantProvider.qwen.name, AssistantProvider.codex.name] else { throw TokenStewardError.invalid("Compare task lanes") }
             case "arc-evaluation":
-                guard providers == ["ARC deterministic checker"] || providers == ["ARC local symbolic solver + checker"] else { throw TokenStewardError.invalid("evaluation task lanes") }
+                guard providers == ["ARC deterministic checker"] || providers == ["ARC local symbolic solver + checker"] || providers == [ARCQwenProposalInference.provider] else { throw TokenStewardError.invalid("evaluation task lanes") }
             case "api": break
             default: throw TokenStewardError.invalid("task route")
             }
             for lane in task.lanes {
                 try validateID(lane.provider)
                 guard states.contains(lane.state), lane.elapsedMilliseconds.map({ $0 >= 0 }) != false,
-                      !lane.localAttemptsMeasured || lane.provider == AssistantProvider.qwen.name else {
+                      !lane.localAttemptsMeasured || [AssistantProvider.qwen.name, ARCQwenProposalInference.provider].contains(lane.provider) else {
                     throw TokenStewardError.invalid("lane state or measurement")
                 }
                 if let admission = lane.admission {

@@ -8,6 +8,7 @@ struct ARCCapabilitiesWorkspace: View {
     var onEvaluation: @MainActor (ARCCapabilitiesEvent) -> Void = { _ in }
     var onOpenUsage: ((String) -> Void)?
     var onOpenGraph: ((String) -> Void)?
+    var qwenModel: String = QwenAssistant.defaultModel
     @State private var importError: String?
     @State private var page: Page = .solve
     private enum Page { case solve, results }
@@ -34,8 +35,12 @@ struct ARCCapabilitiesWorkspace: View {
                     }
                     if page == .solve {
                         ARCSolverPanel(store: store, onEvaluation: onEvaluation,
-                            onOpenUsage: onOpenUsage, onOpenGraph: onOpenGraph)
+                            onOpenUsage: onOpenUsage, onOpenGraph: onOpenGraph,
+                            onShowQwen: { reader.scrollTo("arc-qwen-panel", anchor: .top) })
                             .id("arc-solver-panel")
+                        ARCQwenProposalPanel(store: store, model: qwenModel, onEvaluation: onEvaluation,
+                            onOpenUsage: onOpenUsage, onOpenGraph: onOpenGraph)
+                            .id("arc-qwen-panel")
                     } else {
                         if store.records.isEmpty {
                             ContentUnavailableView("Your results will appear here", systemImage: "square.grid.3x3",
@@ -47,7 +52,7 @@ struct ARCCapabilitiesWorkspace: View {
                 }.padding(24).frame(maxWidth: 1000, alignment: .leading).frame(maxWidth: .infinity)
             }.accessibilityIdentifier("capabilities.workspace")
                 .onAppear {
-                    if store.isSolving { page = .solve }
+                    if store.isSolving || store.isProposing { page = .solve }
                     else if let id = store.selectedRecordID {
                         page = .results
                         DispatchQueue.main.async {
@@ -56,12 +61,15 @@ struct ARCCapabilitiesWorkspace: View {
                     }
                 }
                 .onChange(of: store.selectedRecordID) { _, id in
-                    if let id, !store.isSolving {
+                    if let id, !store.isSolving, !store.isProposing {
                         page = .results
                         DispatchQueue.main.async {
                             if page == .results && store.selectedRecordID == id { reader.scrollTo(id, anchor: .top) }
                         }
                     }
+                }
+                .onChange(of: store.isProposing) { _, proposing in
+                    if proposing { page = .solve; store.clearRecordSelection() }
                 }
                 .onChange(of: store.isSolving) { _, isSolving in
                     if isSolving {
@@ -80,7 +88,7 @@ struct ARCCapabilitiesWorkspace: View {
             Text("ARC Lab").font(.system(size: 28, weight: .medium, design: .rounded))
             Text("Explore patterns. Test an idea. Review the evidence.")
                 .foregroundStyle(WorkspaceTheme.muted)
-            Label("Runs on this Mac · No model connection needed", systemImage: "desktopcomputer")
+            Label("Local rule search · Optional Qwen proposals", systemImage: "desktopcomputer")
                 .font(.caption).foregroundStyle(WorkspaceTheme.accent)
                 .accessibilityIdentifier("capabilities.local-status")
         }
@@ -167,7 +175,7 @@ struct ARCCapabilitiesWorkspace: View {
                     store.replaySolver(recordID: record.id, onEvaluation: onEvaluation)
                 }
                 .buttonStyle(WorkspaceActionStyle())
-                .disabled(store.isSolving)
+                .disabled(store.isSolving || store.isProposing)
                 .help("Repeat this retained task with the local solver and compare its trace.")
                 .accessibilityIdentifier("capabilities.solver.replay.\(record.id)")
                 Text("Exact counts above come from the independent checker. A training fit or matching replay does not establish a correct test answer.")

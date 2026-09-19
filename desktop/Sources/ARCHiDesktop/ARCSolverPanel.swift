@@ -9,6 +9,7 @@ struct ARCSolverPanel: View {
     var onEvaluation: @MainActor (ARCCapabilitiesEvent) -> Void = { _ in }
     var onOpenUsage: ((String) -> Void)? = nil
     var onOpenGraph: ((String) -> Void)? = nil
+    var onShowQwen: (() -> Void)? = nil
     @State private var importError: String?
     @State private var showTraining = false
     @State private var showHowItWorks = false
@@ -31,8 +32,8 @@ struct ARCSolverPanel: View {
                     .accessibilityIdentifier("capabilities.solver.import-error")
             }
             HStack(alignment: .top, spacing: 8) {
-                if store.isSolving { ProgressView().controlSize(.small) }
-                Text(store.solverStatus)
+                if store.isSolving || store.isProposing { ProgressView().controlSize(.small) }
+                Text(store.isProposing ? store.qwenProposalStatus : store.solverStatus)
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
                     .accessibilityIdentifier("capabilities.solver.status")
@@ -83,7 +84,7 @@ struct ARCSolverPanel: View {
             }
             .help("Load the built-in synthetic task. Loading does not run the solver.")
             .accessibilityIdentifier("capabilities.solver.sample")
-        }.disabled(store.isSolving)
+        }.disabled(store.isSolving || store.isProposing)
     }
 
     private var runControls: some View {
@@ -93,10 +94,15 @@ struct ARCSolverPanel: View {
                 store.startSolving(onEvaluation: onEvaluation)
             }
             .buttonStyle(WorkspaceActionStyle(prominent: true))
-            .disabled(store.solverDocument == nil || store.isSolving)
+            .disabled(store.solverDocument == nil || store.isSolving || store.isProposing)
             .accessibilityIdentifier("capabilities.solver.solve")
+            if let onShowQwen {
+                Button("Try Qwen", action: onShowQwen)
+                    .help("Go to the local Qwen proposal controls.")
+                    .accessibilityIdentifier("capabilities.solver.show-qwen")
+            }
             Button("Stop", systemImage: "stop.fill") { store.stopSolving() }
-                .disabled(!store.isSolving)
+                .disabled(!store.isSolving && !store.isProposing)
                 .accessibilityIdentifier("capabilities.solver.stop")
         }
     }

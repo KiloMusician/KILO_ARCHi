@@ -123,6 +123,76 @@ final class ARCSolverPresentationTests: XCTestCase {
         print("ARC solver native presentation evidence: \(output.path)")
     }
 
+    /// One explicitly enabled local model request through the production button.
+    /// This is a workflow smoke check, never a benchmark or accuracy threshold.
+    @MainActor
+    func testOneLocalQwenProposalThroughNativeControls() async throws {
+        guard let path = ProcessInfo.processInfo.environment["ARCHI_ARC_QWEN_SMOKE_DIR"], !path.isEmpty else {
+            throw XCTSkip("Set ARCHI_ARC_QWEN_SMOKE_DIR to make one local Qwen synthetic proposal.")
+        }
+        let output = URL(fileURLWithPath: path).appendingPathComponent("qwen-proposal-\(UUID())")
+        let profile = FileManager.default.temporaryDirectory.appendingPathComponent("arc-qwen-smoke-\(UUID())")
+        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: profile, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: profile) }
+        let store = ARCCapabilitiesStore(storageURL: profile.appendingPathComponent("evidence.json"))
+        var events: [ARCCapabilitiesEvent] = []
+        let app = NSApplication.shared, policy = app.activationPolicy()
+        _ = app.setActivationPolicy(.accessory); app.finishLaunching()
+        defer { _ = app.setActivationPolicy(policy) }
+        let window = NSWindow(contentRect: NSRect(x: 40, y: 40, width: 880, height: 640),
+            styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+        window.title = "ARCHi · One local Qwen ARC proposal"
+        window.isReleasedWhenClosed = false
+        let hosting = NSHostingView(rootView: ARCCapabilitiesWorkspace(store: store,
+            onEvaluation: { events.append($0) }).preferredColorScheme(.dark))
+        window.contentView = hosting
+        window.makeKeyAndOrderFront(nil); app.activate(ignoringOtherApps: true)
+        defer {
+            try? capture(hosting, at: output.appendingPathComponent("qwen-result-dark.png"))
+            let review = store.qwenProposalReview
+            let counts = store.records.first { $0.id == review?.evidenceID }?.summary.counts
+            let result: [String: Any] = [
+                "schema": "archi-arc-qwen-native-smoke/v1",
+                "status": store.qwenProposalStatus,
+                "model": review?.inference.model ?? QwenAssistant.defaultModel,
+                "outcome": review?.result.map { String(describing: $0.status) } ?? "unavailable",
+                "trainingPassed": review?.result?.trainingPassed ?? 0,
+                "trainingCount": review?.result?.trainingCount ?? 0,
+                "exactExamples": counts?.exact ?? 0,
+                "testExamples": counts?.totalExamples ?? 0,
+                "inputTokens": review?.inference.inputTokens.map { $0 as Any } ?? NSNull(),
+                "outputTokens": review?.inference.outputTokens.map { $0 as Any } ?? NSNull(),
+                "elapsedMilliseconds": review?.elapsedMilliseconds ?? 0,
+                "evidenceID": review?.evidenceID ?? "none",
+                "terminalEvents": events.filter { !$0.proposalInProgress }.count,
+                "boundary": "One actual local model request on a synthetic sample, using production native controls and disposable evidence. No benchmark, paid call, real profile or installed acceptance claim."
+            ]
+            try? JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys])
+                .write(to: output.appendingPathComponent("smoke.json"))
+            store.stopQwenProposal(); window.contentView = nil; window.close()
+            print("Local Qwen ARC native smoke: \(output.path)")
+        }
+        try await settle(hosting, window)
+        try await NativeAccessibilityFixture.initialize(waitingFor: "capabilities.solver.sample") {
+            self.nodes(window).contains { $0.identifier == "capabilities.solver.sample" }
+        }
+        try press(try await reachable("capabilities.solver.sample", hosting, window))
+        try await settle(hosting, window)
+        try press(try await reachable("capabilities.qwen.propose", hosting, window))
+        let deadline = ContinuousClock.now.advanced(by: .seconds(190))
+        while store.isProposing && ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(50)) }
+        XCTAssertFalse(store.isProposing, "The explicit local proposal must finish within the transport deadline.")
+        let review = try XCTUnwrap(store.qwenProposalReview)
+        XCTAssertNil(review.error)
+        XCTAssertNotNil(review.result)
+        XCTAssertNotNil(review.evidenceID)
+        XCTAssertEqual(events.filter { !$0.proposalInProgress }.count, 1)
+        XCTAssertEqual(store.records.count, 1)
+        XCTAssertNil(store.records.first?.solverEvidence, "A Qwen proposal must not pretend to be catalog-search evidence.")
+        _ = try await reachable("capabilities.qwen.checker", hosting, window)
+    }
+
     private struct Node {
         let object: NSObject
         let identifier: String?
