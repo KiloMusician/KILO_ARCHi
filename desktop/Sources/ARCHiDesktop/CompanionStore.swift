@@ -98,6 +98,8 @@ final class CompanionStore: ObservableObject {
     let tokenSteward: TokenStewardStore
     let arcCapabilities: ARCCapabilitiesStore
     let arc3: ARC3SessionStore
+    let documentWork: DocumentWorkJournal
+    @Published private(set) var documentWorkMessage: String?
     @Published private(set) var showsARC3Reply = false
     @Published private(set) var lastARC3Summary: ARC3SessionSummary?
     @Published private(set) var stewardMessage: String?
@@ -167,8 +169,10 @@ final class CompanionStore: ObservableObject {
     @Published var prompt = ""
     let voiceInput: VoiceInputController
     @Published var requestsRevision = false
+    @Published var documentRequirements = DocumentWorkRequirements()
     @Published private(set) var workingCopyNotice = "Select a passage to begin."
     private var workingCopyUndo: WorkingCopyEditReceipt?
+    @Published private(set) var pendingDocumentReceipt: DocumentWorkRecord?
     private var openedWorkingCopyDigest: String?
     private var exportedWorkingCopyDigest: String?
     var hasUnexportedWorkingCopy: Bool {
@@ -504,6 +508,7 @@ final class CompanionStore: ObservableObject {
         self.tokenSteward = tokenSteward ?? TokenStewardStore(url: resolvedPreferenceURL.deletingPathExtension().appendingPathExtension("steward.json"))
         self.arcCapabilities = arcCapabilities ?? ARCCapabilitiesStore(storageURL: resolvedPreferenceURL.deletingPathExtension().appendingPathExtension("arc.json"))
         self.arc3 = arc3 ?? ARC3SessionStore(outputDirectory: resolvedPreferenceURL.deletingLastPathComponent().appendingPathComponent("ARC3Episodes", isDirectory: true))
+        self.documentWork = DocumentWorkJournal(url: resolvedPreferenceURL.deletingPathExtension().appendingPathExtension("document-work.json"))
         // A prepared recovery journal is resolved before either saved owner is
         // admitted. A conflicting interrupted restore leaves both owners closed.
         let startupRecoveryBlock = DesktopRecoveryStartup.recoverIfNeeded(at: resolvedPreferenceURL)
@@ -536,6 +541,8 @@ final class CompanionStore: ObservableObject {
         self.tokenSteward.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }
             .store(in: &evolutionSubscriptions)
         self.arcCapabilities.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }
+            .store(in: &evolutionSubscriptions)
+        self.documentWork.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }
             .store(in: &evolutionSubscriptions)
         self.arc3.objectWillChange.receive(on: RunLoop.main).sink { [weak self] in
             guard let self else { return }
@@ -601,6 +608,15 @@ final class CompanionStore: ObservableObject {
     }
 
     func dismissWorkspaceRoutingNotice() { workspaceRoutingNotice = nil }
+
+    @discardableResult
+    func openDocumentUsage(taskID: String) -> Bool {
+        let available = tokenSteward.loadError == nil && tokenSteward.tasks.contains { $0.id == taskID }
+        selectedStewardTaskID = available ? taskID : nil
+        open(.steward)
+        workspaceRoutingNotice = available ? nil : "That request's usage is unavailable. No replacement was selected."
+        return available
+    }
 
     @discardableResult
     func openARCUsage(taskID: String) -> Bool {
@@ -998,73 +1014,180 @@ final class CompanionStore: ObservableObject {
             status = "Select a passage in the document first."; return
         }
         requestsRevision = true
+        documentRequirements.mustBeShorter = shorten
         prompt = shorten ? "Shorten the selected passage while preserving its meaning."
             : "Make the selected passage clearer while preserving its meaning."
         status = "Revision prepared · describe what you want, then Send"
     }
 
     var canUndoWorkingCopyEdit: Bool {
-        workingCopyUndo?.canUndo(text: sharedText, revision: sourceRevision) == true
+        guard let undo = workingCopyUndo, undo.canUndo(text: sharedText, revision: sourceRevision),
+              let id = undo.documentWorkID else { return false }
+        return documentWork.records.contains { $0.id == id && $0.state == .applied }
     }
 
-    /// A candidate stays inside its original lane until this explicit action.
-    /// There is no await between checking the exact source and replacing it.
-    func applyPassageRevision(provider: AssistantProvider, targetID: String) {
+    func documentVerification(_ proposal: PassageRevisionProposal) -> DocumentWorkVerification {
+        DocumentWorkCapability.verify(proposal: proposal, text: sharedText,
+            sourceRevision: sourceRevision, requirements: proposal.target.requirements)
+    }
+
+    func documentRecord(requestID: String, provider: AssistantProvider) -> DocumentWorkRecord? {
+        documentWork.records.first { $0.id == requestID + "-" + provider.rawValue }
+    }
+
+    func canApplyDocumentRevision(provider: AssistantProvider, proposal: PassageRevisionProposal) -> Bool {
         guard let lane = compareResults[provider], lane.state == .complete,
-              let proposal = lane.revision, proposal.decision == .propose,
-              proposal.target.id == targetID, let receipt = lane.receipt,
-              isCurrent(receipt.context, requireVisible: false),
-              textSelection == proposal.target.selection else {
-            workingCopyNotice = "This revision is no longer current. Select the passage and request a new one."; return
+              let receipt = lane.receipt, isCurrent(receipt.context, requireVisible: false),
+              textSelection == proposal.target.selection, documentWork.loadError == nil,
+              let record = documentRecord(requestID: receipt.requestID, provider: provider),
+              record.targetID == proposal.target.id, record.state == .ready else { return false }
+        return documentVerification(proposal).canApply
+    }
+
+    private func beginDocumentWork(requestID: String, provider: AssistantProvider, target: RevisionTarget) throws {
+        try retryDocumentReceipt()
+        let now = wallClock()
+        try documentWork.save(DocumentWorkRecord(id: requestID + "-" + provider.rawValue,
+            requestID: requestID, provider: provider.rawValue, targetID: target.id,
+            sourceDigest: target.sourceDigest, sourceRevision: target.selection.sourceRevision,
+            selectionStart: target.selection.range.location, selectionLength: target.selection.range.length,
+            mustBeShorter: target.requirements.mustBeShorter,
+            preserveNumbersAndLinks: target.requirements.preserveNumbersAndLinks,
+            createdAt: now, updatedAt: now, state: .proposing,
+            detail: "Exact working-copy passage captured. No edit applied."))
+        documentWorkMessage = nil
+    }
+
+    private func completeDocumentProposal(requestID: String, provider: AssistantProvider, proposal: PassageRevisionProposal) throws {
+        guard var record = documentRecord(requestID: requestID, provider: provider), record.state == .proposing else {
+            throw WorkingCopyRevisionError.staleTarget
         }
+        let checked = documentVerification(proposal)
+        record.proposedDigest = WorkingCopyEditReceipt.digest(proposal.replacement)
+        record.expectedAfterDigest = checked.predictedDigest
+        record.checks = checked.checks.map { .init(id: $0.id, title: $0.title, passed: $0.passed) }
+        record.state = checked.canApply ? .ready : .blocked
+        record.updatedAt = wallClock()
+        record.detail = checked.canApply ? "Mechanical checks passed. Review meaning and facts before Apply."
+            : "No edit applied. The proposal needs clarification or fails a requested mechanical constraint."
+        try documentWork.save(record)
+    }
+
+    private func retireDocumentWork(requestID: String, provider: AssistantProvider, failed: Bool) {
+        guard var record = documentRecord(requestID: requestID, provider: provider),
+              [.proposing, .ready].contains(record.state) else { return }
+        record.state = failed ? .failed : .cancelled
+        record.updatedAt = wallClock()
+        record.detail = failed ? "Request did not finish. No edit was applied." : "Request retired. No edit was applied."
+        do { try documentWork.save(record) }
+        catch { documentWorkMessage = "Document history could not be updated: \(error.localizedDescription)" }
+    }
+
+    /// The pending receipt is saved before mutation. No await separates source
+    /// verification, replacement and the check of the actual resulting bytes.
+    func applyPassageRevision(provider: AssistantProvider, targetID: String) {
+        guard let lane = compareResults[provider], let proposal = lane.revision,
+              proposal.target.id == targetID, canApplyDocumentRevision(provider: provider, proposal: proposal),
+              let receipt = lane.receipt,
+              var record = documentRecord(requestID: receipt.requestID, provider: provider) else {
+            workingCopyNotice = "This revision is stale or a required check failed. Review the checks and request a new revision."; return
+        }
+        let before = sharedText
+        let after: String
         do {
-            let before = sharedText
-            let after = try WorkingCopyEditReceipt.applying(proposal: proposal, to: before, sourceRevision: sourceRevision)
-            // Cancels a still-running Compare sibling and revokes both previews.
-            invalidateTextSelection(reason: "A reviewed revision was applied.")
-            cancelWork(reason: "Working copy changed; earlier proposals cleared.")
-            clearSessionContext()
-            sharedText = after
-            sourceRevision &+= 1
-            compareResults = [:]
-            workingCopyUndo = WorkingCopyEditReceipt(before: before,
-                afterDigest: SHA256.hash(data: Data(after.utf8)).map { String(format: "%02x", $0) }.joined(),
-                afterRevision: sourceRevision)
-            requestsRevision = false
-            guard sharedText.utf8.elementsEqual(after.utf8), canUndoWorkingCopyEdit else {
-                workingCopyNotice = "The working copy could not be verified."; return
-            }
-            workingCopyNotice = "Applied to working copy · Undo is available. Export to keep a separate draft."
-            reply = proposal.explanation
-            status = "Reviewed revision applied · original file unchanged"
-            record("Applied reviewed \(provider.name) passage revision \(targetID) to working copy revision \(sourceRevision)")
+            after = try WorkingCopyEditReceipt.applying(proposal: proposal, to: before, sourceRevision: sourceRevision)
+            guard WorkingCopyEditReceipt.digest(after) == record.expectedAfterDigest else { throw WorkingCopyRevisionError.staleTarget }
+            record.state = .applying; record.updatedAt = wallClock()
+            record.detail = "Apply requested. Awaiting actual working-copy verification."
+            try documentWork.save(record)
         } catch {
-            workingCopyNotice = "This revision could not be applied to the current copy. Nothing changed."
+            workingCopyNotice = "Could not prepare a retained Apply receipt. Nothing changed. \(error.localizedDescription)"; return
         }
+        invalidateTextSelection(reason: "A reviewed revision was applied.")
+        cancelWork(reason: "Working copy changed; earlier proposals cleared.")
+        clearSessionContext()
+        sharedText = after
+        sourceRevision &+= 1
+        compareResults = [:]
+        workingCopyUndo = WorkingCopyEditReceipt(before: before, afterDigest: WorkingCopyEditReceipt.digest(after),
+            afterRevision: sourceRevision, documentWorkID: record.id)
+        requestsRevision = false
+        record.actualAfterDigest = WorkingCopyEditReceipt.digest(sharedText)
+        record.afterRevision = sourceRevision
+        record.updatedAt = wallClock()
+        let verified = record.actualAfterDigest == record.expectedAfterDigest
+            && workingCopyUndo?.canUndo(text: sharedText, revision: sourceRevision) == true
+        record.state = verified ? .applied : .failed
+        record.detail = verified ? "Applied after review; actual bytes match the predicted working copy. Meaning and facts are user-reviewed. Original file unchanged."
+            : "Apply outcome could not be verified. Inspect the working copy."
+        do { try documentWork.save(record); documentWorkMessage = nil; pendingDocumentReceipt = nil }
+        catch {
+            pendingDocumentReceipt = record
+            documentWorkMessage = "The copy changed, but its completed receipt could not be saved. Retry saving the receipt to enable Undo."
+        }
+        workingCopyNotice = verified && pendingDocumentReceipt == nil
+            ? "Applied to working copy · Undo available. Export to keep a separate draft."
+            : documentWorkMessage ?? record.detail
+        reply = proposal.explanation
+        status = workingCopyNotice
+        self.record("Applied reviewed passage revision \(targetID) to working copy revision \(sourceRevision)")
+    }
+
+    private func retryDocumentReceipt() throws {
+        guard let pendingDocumentReceipt else { return }
+        try documentWork.save(pendingDocumentReceipt)
+        self.pendingDocumentReceipt = nil
+        documentWorkMessage = nil
+    }
+
+    func retryDocumentHistorySave() {
+        do {
+            try retryDocumentReceipt()
+            workingCopyNotice = canUndoWorkingCopyEdit ? "Receipt saved · Undo is available." : "Document receipt saved."
+        } catch { documentWorkMessage = "Receipt remains pending: \(error.localizedDescription)" }
     }
 
     func dismissPassageRevision(provider: AssistantProvider) {
-        guard compareResults[provider]?.state == .complete else { return }
+        guard let lane = compareResults[provider], lane.state == .complete else { return }
+        if let receipt = lane.receipt, var record = documentRecord(requestID: receipt.requestID, provider: provider) {
+            record.state = .dismissed; record.updatedAt = wallClock()
+            record.detail = "Proposal dismissed. Working copy unchanged."
+            do { try documentWork.save(record) }
+            catch { documentWorkMessage = "Dismissal was not saved: \(error.localizedDescription)" }
+        }
         compareResults[provider]?.revision = nil
         compareResults[provider]?.status = "Revision dismissed · copy unchanged"
         workingCopyNotice = "Revision dismissed · your working copy is unchanged."
     }
 
     func undoWorkingCopyEdit() {
-        guard let undo = workingCopyUndo, undo.canUndo(text: sharedText, revision: sourceRevision) else {
-            workingCopyNotice = "That Undo belongs to an earlier copy and cannot change this one."; return
+        guard let undo = workingCopyUndo, undo.canUndo(text: sharedText, revision: sourceRevision),
+              let id = undo.documentWorkID, var record = documentWork.records.first(where: { $0.id == id }),
+              record.state == .applied else {
+            workingCopyNotice = "That Undo is unavailable or belongs to an earlier copy."; return
         }
+        record.state = .undoing; record.updatedAt = wallClock()
+        record.detail = "Undo requested. Awaiting verification of the original working-copy bytes."
+        do { try documentWork.save(record) }
+        catch { workingCopyNotice = "Could not prepare an Undo receipt. Nothing changed."; return }
         invalidateTextSelection(reason: "Working-copy revision undone.")
         cancelWork(reason: "Working-copy revision undone.")
         clearSessionContext()
         sharedText = undo.before
         sourceRevision &+= 1
-        compareResults = [:]
-        workingCopyUndo = nil
-        requestsRevision = false
-        workingCopyNotice = "Undone · the exact previous working copy is restored."
-        status = workingCopyNotice
-        record("Undid working-copy edit; source revision \(sourceRevision)")
+        compareResults = [:]; workingCopyUndo = nil; requestsRevision = false
+        let restored = WorkingCopyEditReceipt.digest(sharedText) == record.sourceDigest
+        record.state = restored ? .undone : .failed
+        record.updatedAt = wallClock()
+        record.detail = restored ? "Undo restored the exact original working-copy bytes. Apply digests remain as history."
+            : "Undo outcome unverified. Inspect the working copy."
+        do { try documentWork.save(record); documentWorkMessage = nil; pendingDocumentReceipt = nil }
+        catch {
+            pendingDocumentReceipt = record
+            documentWorkMessage = "The copy was restored, but the completed Undo receipt could not be saved. Retry saving the receipt."
+        }
+        workingCopyNotice = record.detail; status = workingCopyNotice
+        self.record("Undid working-copy edit; source revision \(sourceRevision)")
     }
 
     func exportWorkingCopy() {
@@ -1348,7 +1471,7 @@ final class CompanionStore: ObservableObject {
         let revisionTarget: RevisionTarget?
         if requestsRevision && pointing == nil {
             guard let selection = textSelection,
-                  let target = RevisionTarget(text: sharedText, sourceRevision: sourceRevision, selection: selection) else {
+                  let target = RevisionTarget(text: sharedText, sourceRevision: sourceRevision, selection: selection, requirements: documentRequirements) else {
                 status = "Select a current passage before requesting a revision. Nothing was sent."; return false
             }
             revisionTarget = target
@@ -1507,6 +1630,9 @@ final class CompanionStore: ObservableObject {
                     self.connectionMessages[provider] = "\(provider.name) connected for this request."
                     self.refreshRouteConnection()
                 }
+                if let target = request.revisionTarget {
+                    try self.beginDocumentWork(requestID: requestID, provider: provider, target: target)
+                }
                 try self.tokenSteward.recordDispatch(requestID: requestID, provider: provider)
                 self.compareResults[provider]?.receipt?.requestStarted = true
                 try await assistant.reply(to: request) { [weak self] event in
@@ -1535,6 +1661,9 @@ final class CompanionStore: ObservableObject {
                 guard self.isCurrentLane(provider, owner: owner, epoch: epoch, client: assistant, ticket: ticket), !Task.isCancelled else { return }
                 if request.revisionTarget != nil && self.compareResults[provider]?.revision == nil {
                     self.failLane(provider, message: "No validated revision completed. Your copy is unchanged."); return
+                }
+                if let proposal = self.compareResults[provider]?.revision {
+                    try self.completeDocumentProposal(requestID: requestID, provider: provider, proposal: proposal)
                 }
                 self.finishOwnership(provider)
                 self.setLane(provider, status: request.revisionTarget == nil ? "Reply ready" : "Revision ready for review", state: .complete)
@@ -1832,6 +1961,9 @@ final class CompanionStore: ObservableObject {
         let recordsTerminalOutcome = result.state == .pending && state != .pending
         if let text { result.text = text }
         if state == .cancelled || state == .failed {
+            if let receipt = result.receipt {
+                self.retireDocumentWork(requestID: receipt.requestID, provider: provider, failed: state == .failed)
+            }
             result.revision = nil
             // A store-owned timeout can end the lane before the coordinator's
             // terminal callback. Retire only unfinished attempts in the captured

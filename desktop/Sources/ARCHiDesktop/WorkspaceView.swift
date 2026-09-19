@@ -413,15 +413,16 @@ private struct AssistantReplyContent: View {
                 .padding(12)
                 .background(WorkspaceTheme.accent.opacity(0.17), in: RoundedRectangle(cornerRadius: 10))
             }
-            if store.compareResults.values.contains(where: { $0.revision != nil }) {
-                Button("Review passage changes", systemImage: "doc.text.viewfinder") { store.section = .context }
-                    .buttonStyle(.borderedProminent)
-                    .accessibilityIdentifier("assistant.open-revision-review")
-            }
             if store.showsARC3Reply {
                         ARC3AssistantReply(store: store, session: store.arc3)
                     } else if store.activeARCAnswer != nil {
                 ARCActiveAssistantReply(store: store)
+            } else if store.compareResults.values.contains(where: { $0.revision != nil }) {
+                ForEach(AssistantProvider.allCases) { provider in
+                    if let result = store.compareResults[provider] {
+                        WorkTogetherReplyLane(store: store, provider: provider, result: result)
+                    }
+                }
             } else if store.route == .compare {
                 ComparisonReplyPanels(store: store)
             } else {

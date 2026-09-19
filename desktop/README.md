@@ -41,3 +41,7 @@ ARCHi's actual native position remains authoritative. Moving or hiding him, scro
 The [personal assistance checkpoint](../docs/native-personal-assistance.md) records bounded local-model and native editing/lesson evidence. [Practice and Evolution](../docs/battle-evolution-checkpoint.md), [individual appearance](../docs/individual-appearance-checkpoint.md), and [Reactor expression](../docs/native-reactor-expression.md) retain their exact dates, build identities and limits. Historical test totals are not results for a newly built candidate.
 
 The [Alpha guide](../docs/desktop-alpha-guide.md) defines a short supervised same-Mac check. Broader ordinary-day reliability, complete recovery, accessibility, fresh-Mac setup and distribution qualification remain in the existing plan. Live Reactor likeness/termination, full ARC or teacher/student training, external-application editing, mobile, camera/AR and trading are not included in this Alpha acceptance claim.
+
+### Document work integration
+
+Selected-passage revision now binds explicit requirements at Send, checks proposed edits, and retains metadata for Apply/Undo. See [active document work](../docs/active-document-work.md) for its use, source constraints and Hampton learning priorities.

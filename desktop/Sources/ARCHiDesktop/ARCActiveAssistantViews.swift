@@ -7,7 +7,13 @@ struct ARCActiveAssistantActions: View {
 
     var body: some View {
         Menu {
-            Button("Solve shared or loaded task") { store.runARC(.solve) }
+            Button("Revise selected passage") { store.preparePassageRevision() }
+                .disabled(store.textSelection == nil || store.isWorking)
+            Button("Shorten selected passage") { store.preparePassageRevision(shorten: true) }
+                .disabled(store.textSelection == nil || store.isWorking)
+            Button("Open document work") { store.open(.context) }
+            Divider()
+            Button("Solve shared or loaded grid task") { store.runARC(.solve) }
                 .disabled(store.isWorking || store.voiceInput.isActive || store.isShuttingDown)
             Button("Propose a rule with local Qwen") { store.runARC(.propose) }
                 .disabled(store.isWorking || store.voiceInput.isActive || store.isShuttingDown)
@@ -18,11 +24,11 @@ struct ARCActiveAssistantActions: View {
             Divider()
             Button("Manage ARC tasks and results") { store.open(.capabilities) }
         } label: {
-            Label("ARC task", systemImage: "square.grid.3x3")
+            Label("Work task", systemImage: "square.grid.3x3")
         }
         .menuStyle(.borderlessButton).fixedSize()
         .accessibilityIdentifier("assistant.arc-actions")
-        .help("Use ARCHi’s shared ARC service for grid reasoning or interactive environments. Your message draft is preserved.")
+        .help("Prepare document work or use the shared ARC services. Preparing a document revision does not send it.")
     }
 }
 
@@ -33,6 +39,18 @@ struct ARCActiveWorkBar: View {
     @ObservedObject var store: CompanionStore
 
     var body: some View {
+        if let document = store.documentWork.records.first(where: { [.proposing, .ready].contains($0.state) }) {
+            HStack(spacing: 12) {
+                Label(document.state == .ready ? "Document revision ready for review" : "ARCHi is revising a passage", systemImage: "doc.text")
+                    .font(.callout.weight(.medium))
+                Spacer(minLength: 0)
+                Text(document.state == .ready ? "Nothing applied" : "Preparing a proposal").font(.caption).foregroundStyle(.secondary)
+                Button("Stop") { store.cancelWork() }
+                    .accessibilityIdentifier("workspace.document.stop")
+            }
+            .padding(.horizontal, 18).padding(.vertical, 10).background(WorkspaceTheme.panel)
+            .accessibilityIdentifier("workspace.document.active")
+        }
         if store.arc3.isSessionActive || store.arc3.isWorking || store.activeARCAnswer?.isWorking == true {
             HStack(spacing: 12) {
                 Image(systemName: "square.grid.3x3").foregroundStyle(WorkspaceTheme.accent)

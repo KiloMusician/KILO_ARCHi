@@ -1,0 +1,56 @@
+import SwiftUI
+
+struct DocumentWorkCheckView: View {
+    let verification: DocumentWorkVerification
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label(verification.canApply ? "Ready for your review" : "A required check needs attention",
+                  systemImage: verification.canApply ? "checkmark.shield" : "exclamationmark.triangle")
+                .font(.caption.weight(.semibold))
+            ForEach(verification.checks) { check in
+                Label(check.title, systemImage: check.passed ? "checkmark.circle" : "xmark.circle")
+                    .foregroundStyle(check.passed ? Color.secondary : Color.orange)
+            }
+            Text("These are mechanical checks. Review meaning, facts and usefulness before Apply.")
+                .foregroundStyle(.secondary)
+        }.font(.caption2).fixedSize(horizontal: false, vertical: true)
+            .accessibilityIdentifier("document.revision-checks")
+    }
+}
+
+@MainActor
+struct DocumentWorkHistory: View {
+    @ObservedObject var store: CompanionStore
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let error = store.documentWorkMessage ?? store.documentWork.loadError {
+                Text(error).foregroundStyle(.orange).font(.caption)
+                    .accessibilityIdentifier("document.history-error")
+            }
+            if store.pendingDocumentReceipt != nil {
+                Button("Retry saving document receipt") { store.retryDocumentHistorySave() }
+                    .accessibilityIdentifier("document.retry-receipt")
+            }
+            if !store.documentWork.records.isEmpty {
+                DisclosureGroup("Document work history") {
+                    Text("Keeps up to 64 request and action records on this Mac. Document and reply text are not retained here. History cannot replay an edit.")
+                        .font(.caption2).foregroundStyle(.secondary)
+                    ForEach(store.documentWork.records.prefix(8)) { record in
+                        VStack(alignment: .leading, spacing: 5) {
+                            HStack {
+                                Text(record.state.rawValue.capitalized).font(.caption.weight(.semibold))
+                                Spacer()
+                                Text(record.updatedAt, style: .time).font(.caption2).foregroundStyle(.secondary)
+                            }
+                            Text(record.detail).font(.caption2).foregroundStyle(.secondary)
+                            HStack {
+                                Button("Usage") { _ = store.openDocumentUsage(taskID: record.requestID) }
+                                Button("Activity map") { store.open(.nodeLab) }
+                            }.font(.caption2).buttonStyle(.borderless)
+                        }.padding(.vertical, 5)
+                    }
+                }.font(.caption).accessibilityIdentifier("document.history")
+            }
+        }.frame(maxWidth: .infinity, alignment: .leading)
+    }
+}

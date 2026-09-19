@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import Testing
 @testable import ARCHiDesktop
 
@@ -15,6 +16,8 @@ struct WorkingCopyStoreTests {
         rig.store.applyPassageRevision(provider: .qwen, targetID: proposal.target.id)
         #expect(rig.store.sharedText == "Café 👩🏽‍💻. Repeat. Revised! e\u{301}\r\n")
         #expect(rig.store.canUndoWorkingCopyEdit)
+        #expect(rig.store.documentWork.records.first?.state == .applied)
+        #expect(rig.store.documentWork.records.first?.actualAfterDigest == WorkingCopyEditReceipt.digest(rig.store.sharedText))
         let applied = rig.store.sharedText, revision = rig.store.sourceRevision
         rig.store.applyPassageRevision(provider: .qwen, targetID: proposal.target.id)
         #expect(rig.store.sharedText == applied)
@@ -23,6 +26,53 @@ struct WorkingCopyStoreTests {
         #expect(rig.store.sharedText.utf8.elementsEqual(original.utf8))
         #expect(rig.store.sourceRevision == revision + 1)
         #expect(!rig.store.canUndoWorkingCopyEdit)
+        #expect(rig.store.documentWork.records.first?.state == .undone)
+        #expect(!rig.store.companionGraphSnapshot().nodes.filter { $0.title == "Document revision" }.isEmpty)
+    }
+
+    @Test func receiptFailureDisablesUndoUntilExactPendingReceiptCanBeRetried() async throws {
+        let rig = RevisionStoreRig(); defer { rig.drain() }
+        try await rig.begin()
+        let proposal = try rig.local.complete(replacement: "Revised copy.")
+        try await rig.wait { !rig.store.isWorking }
+        let url = rig.directory.appendingPathComponent("preferences.document-work.json")
+        var pendingBytes: Data?
+        let subscription = rig.store.$sharedText.dropFirst().sink { text in
+            if text == "Revised copy." {
+                // Inject a competing disk write after the pending Apply was
+                // persisted, at the synchronous working-copy mutation boundary.
+                pendingBytes = try? Data(contentsOf: url)
+                try? Data("unreadable journal".utf8).write(to: url)
+            }
+        }
+        rig.store.applyPassageRevision(provider: .qwen, targetID: proposal.target.id)
+        subscription.cancel()
+        #expect(rig.store.sharedText == "Revised copy.")
+        #expect(rig.store.pendingDocumentReceipt?.state == .applied)
+        #expect(!rig.store.canUndoWorkingCopyEdit)
+        rig.store.undoWorkingCopyEdit()
+        #expect(rig.store.sharedText == "Revised copy.")
+        try #require(pendingBytes).write(to: url)
+        rig.store.retryDocumentHistorySave()
+        #expect(rig.store.pendingDocumentReceipt == nil)
+        #expect(rig.store.canUndoWorkingCopyEdit)
+        rig.store.undoWorkingCopyEdit()
+        #expect(rig.store.sharedText == "Original copy.")
+        #expect(rig.store.documentWork.records.first?.state == .undone)
+    }
+
+    @Test func failedConstraintCannotApplyAndUsageIsNotSemanticAcceptance() async throws {
+        let rig = RevisionStoreRig(); defer { rig.drain() }
+        try await rig.begin(text: "The meeting is at 12:30.")
+        let proposal = try rig.local.complete(replacement: "Meet at 13:30.")
+        try await rig.wait { !rig.store.isWorking }
+        #expect(rig.store.documentWork.records.first?.state == .blocked)
+        #expect(!rig.store.canApplyDocumentRevision(provider: .qwen, proposal: proposal))
+        rig.store.applyPassageRevision(provider: .qwen, targetID: proposal.target.id)
+        #expect(rig.store.sharedText == "The meeting is at 12:30.")
+        #expect(!rig.store.canUndoWorkingCopyEdit)
+        rig.store.dismissPassageRevision(provider: .qwen)
+        #expect(rig.store.documentWork.records.first?.state == .dismissed)
     }
 
     @Test func compareCapturesSameTargetAndApplyCancelsUnfinishedSiblingAndLateOutput() async throws {
@@ -153,7 +203,8 @@ struct WorkingCopyStoreTests {
 @MainActor
 private final class RevisionStoreRig {
     let local = RevisionStoreClient(), cloud = RevisionStoreClient()
-    lazy var store = CompanionStore(preferenceURL: URL(fileURLWithPath: "/dev/null/unused"), assistant: local,
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    lazy var store = CompanionStore(preferenceURL: directory.appendingPathComponent("preferences.json"), assistant: local,
         assistantFactory: { [cloud] _, _ in cloud }, tokenSteward: TokenStewardStore())
 
     func begin(text: String = "Original copy.", range: NSRange? = nil, compare: Bool = false) async throws {
@@ -176,6 +227,7 @@ private final class RevisionStoreRig {
     func drain() {
         store.disconnectAssistant(provider: .qwen); store.disconnectAssistant(provider: .codex)
         local.resolve(); cloud.resolve()
+        try? FileManager.default.removeItem(at: directory)
     }
 }
 

@@ -17,7 +17,9 @@ extension CompanionStore {
                 $0.id == summary.sessionID && $0.route == "arc-interactive" && $0.startedAt == summary.startedAt
             } ? summary : nil
         }
-        return ARC3Graph.append(to: base, observation: arc3.observation, transitions: arc3.transitions, summary: recordedSummary)
+        let interactive = ARC3Graph.append(to: base, observation: arc3.observation, transitions: arc3.transitions, summary: recordedSummary)
+        return DocumentWorkGraph.append(to: interactive, records: documentWork.records,
+            accountingTaskIDs: tokenSteward.loadError == nil ? Set(tokenSteward.tasks.map(\.id)) : [])
     }
 
     func openGraphTarget(_ target: CompanionGraphTarget) {
@@ -29,7 +31,7 @@ extension CompanionStore {
         case .capabilities: open(.capabilities)
         case .steward: open(.steward)
         case .interactiveARC: runARC3(.open)
-        case .stewardTask(let taskID): openARCUsage(taskID: taskID)
+        case .stewardTask(let taskID): openDocumentUsage(taskID: taskID)
         case .arcEvidence(let proposalHash):
             arcCapabilities.selectRecord(id: proposalHash)
             open(.capabilities)

@@ -330,6 +330,7 @@ struct WorkTogetherWorkspace: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     VoiceTranscriptPreview(voice: store.voiceInput)
+                    DocumentWorkHistory(store: store)
                     if let selection = store.textSelection,
                        !store.compareResults.values.contains(where: { $0.state == .complete && $0.revision != nil }) {
                         VStack(alignment: .leading, spacing: 5) {
@@ -452,6 +453,7 @@ struct WorkReplyModePicker: View {
     @ObservedObject var store: CompanionStore
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
         Picker("Reply mode", selection: $store.requestsRevision) {
             Text("Ask").tag(false)
             Text("Revise passage").tag(true)
@@ -460,11 +462,20 @@ struct WorkReplyModePicker: View {
         .accessibilityLabel("Reply mode").accessibilityIdentifier("work.reply-mode")
         .disabled(store.isWorking)
         .help("Ask for an answer, or request a proposed change to the selected passage.")
+        if store.requestsRevision {
+            Toggle("Require shorter text", isOn: $store.documentRequirements.mustBeShorter)
+                .accessibilityIdentifier("document.require-shorter")
+            Toggle("Keep exact numbers and links", isOn: $store.documentRequirements.preserveNumbersAndLinks)
+                .accessibilityIdentifier("document.preserve-tokens")
+            Text("Checks are captured when you Send. You review meaning and facts.")
+                .font(.caption2).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        }
+        }.font(.caption).disabled(store.isWorking)
     }
 }
 
 @MainActor
-private struct WorkTogetherReplyLane: View {
+struct WorkTogetherReplyLane: View {
     @ObservedObject var store: CompanionStore
     let provider: AssistantProvider
     let result: AssistantLaneResult
@@ -483,6 +494,7 @@ private struct WorkTogetherReplyLane: View {
                             store.applyPassageRevision(provider: provider, targetID: proposal.target.id)
                         }
                         .buttonStyle(.borderedProminent)
+                        .disabled(!store.canApplyDocumentRevision(provider: provider, proposal: proposal))
                         .accessibilityLabel("Apply \(provider.name) revision")
                         .accessibilityIdentifier("work.apply.\(provider.name.lowercased())")
                         Button("Dismiss") { store.dismissPassageRevision(provider: provider) }
@@ -492,6 +504,7 @@ private struct WorkTogetherReplyLane: View {
                         Spacer(minLength: 0)
                     }
                     .controlSize(.small)
+                    DocumentWorkCheckView(verification: store.documentVerification(proposal))
                     passage("Before", text: proposal.target.selection.quote, proposed: false)
                     passage("After", text: proposal.replacement, proposed: true)
                 } else {
