@@ -1228,8 +1228,13 @@ final class CompanionStore: ObservableObject {
         return documentVerification(proposal).canApply
     }
 
-    private func beginDocumentWork(requestID: String, provider: AssistantProvider, target: RevisionTarget) throws {
+    private func beginDocumentWork(requestID: String, provider: AssistantProvider, target: RevisionTarget,
+                                   control: HamptonQ2EDecision? = nil) throws {
         try retryDocumentReceipt()
+        guard documentWork.isCurrentOnDisk, control?.isValid ?? true,
+              control == nil || (control?.contextID == target.sourceDigest && control?.lane != .stop) else {
+            throw DocumentWorkJournalError.changed
+        }
         let use = documentProcedureRequests[requestID]
         if let use, let reason = documentProcedureUnavailable(use) {
             throw DocumentWorkJournalError.invalid(reason)
@@ -1242,7 +1247,8 @@ final class CompanionStore: ObservableObject {
             mustBeShorter: target.requirements.mustBeShorter,
             preserveNumbersAndLinks: target.requirements.preserveNumbersAndLinks,
             createdAt: now, updatedAt: now, state: .proposing,
-            detail: "Exact working-copy passage captured. No edit applied.", procedureUse: use))
+            detail: "Exact working-copy passage captured. No edit applied.", procedureUse: use,
+            q2eDecision: control))
         documentWorkMessage = nil
     }
 
@@ -1800,6 +1806,12 @@ final class CompanionStore: ObservableObject {
             localProfile: personalContext?.assistantSnapshot)
         let requestTaskScope: HamptonTaskScope = revisionTarget != nil ? .passageRevision
             : request.sourceName != nil ? .documentQuestion : .conversation
+        let capturedControl = revisionTarget != nil && selectedRoute.providers.contains(.qwen)
+            ? documentQ2EDecision : nil
+        if let control = capturedControl, control.lane == .stop || !control.isValid {
+            status = control.reason + " Nothing sent."
+            return false
+        }
         if selectedRoute.providers.contains(.qwen) {
             if let previousScope = localContextTaskScope, previousScope != requestTaskScope {
                 clearSessionContext()
@@ -1847,7 +1859,8 @@ final class CompanionStore: ObservableObject {
                 selection: request.selection, localLessons: provider == .qwen ? capturedLessons : [],
                 revisionTarget: request.revisionTarget, companion: request.companion,
                 localConversation: provider == .qwen ? capturedConversation : [],
-                localProfile: provider == .qwen ? request.localProfile : nil)
+                localProfile: provider == .qwen ? request.localProfile : nil,
+                localControl: provider == .qwen ? capturedControl : nil)
             launchLane(provider, request: laneRequest, ticket: ticket, route: selectedRoute,
                        requestID: requestID, inputDigest: digest, pointing: pointing,
                        routingReason: selectedRoute == .native ? "ARCHi-managed local Qwen first; one external fallback only on an eligible failure."
@@ -1955,7 +1968,8 @@ final class CompanionStore: ObservableObject {
                     self.refreshRouteConnection()
                 }
                 if let target = request.revisionTarget {
-                    try self.beginDocumentWork(requestID: requestID, provider: provider, target: target)
+                    try self.beginDocumentWork(requestID: requestID, provider: provider, target: target,
+                                               control: request.localControl)
                 }
                 try self.tokenSteward.recordDispatch(requestID: requestID, provider: provider)
                 self.compareResults[provider]?.receipt?.requestStarted = true

@@ -33,6 +33,10 @@ struct ARC3ActionAttempt: Codable, Identifiable, Sendable {
     /// unreconciled retains uncertainty after cancellation or transport failure.
     var state: String
     var actualDigest: String?
+    /// Optional fields keep older episode receipts decodable. The decision is
+    /// the pre-dispatch proposal; outcome is populated only after validation.
+    var decision: ARC3PlanDecision? = nil
+    var outcome: String? = nil
 }
 
 struct ARC3SessionSummary: Sendable {
@@ -60,6 +64,7 @@ final class ARC3SessionStore: ObservableObject {
     @Published private(set) var observation: ARC3Observation?
     @Published private(set) var transitions: [ARC3Transition] = []
     @Published private(set) var attempts: [ARC3ActionAttempt] = []
+    @Published private(set) var latestPlan: ARC3PlanDecision?
     @Published private(set) var isWorking = false
     @Published private(set) var isSessionActive = false
     @Published private(set) var error: String?
@@ -79,7 +84,6 @@ final class ARC3SessionStore: ObservableObject {
     private var episodeDirectory: URL?
     private var bridgeReceiptPath: String?
     private var predictions: [String: String] = [:]
-    private var visits: [String: Int] = [:]
 
     init(runtimeRoot: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("ARC-AGI-3-Agents"),
          outputDirectory: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/ARCHi/ARC3"),
@@ -138,7 +142,7 @@ final class ARC3SessionStore: ObservableObject {
         }
         let (id, client) = beginTransport()
         isWorking = true; isSessionActive = true; error = nil; status = "Starting an offline ARC3 episode…"
-        observation = nil; initialObservation = nil; transitions = []; attempts = []; predictions = [:]; visits = [:]
+        observation = nil; initialObservation = nil; transitions = []; attempts = []; predictions = [:]; latestPlan = nil
         receiptURL = nil; bridgeReceiptPath = nil; startedAt = Date(); expectedBudget = budget; activeGameID = gameID
         operation = Task { [weak self] in
             do {
@@ -153,7 +157,7 @@ final class ARC3SessionStore: ObservableObject {
                 let observed = try self.checkedObservation(response, previous: nil)
                 guard observed.dispatches == 1 else { throw ARC3RuntimeError.invalid("ARC3 initial RESET count is invalid.") }
                 self.observation = observed; self.initialObservation = observed
-                self.markObserved(requestID: request.id, digest: observed.frameDigest)
+                self.markObserved(requestID: request.id, digest: observed.frameDigest, outcome: "initial-reset")
                 self.retainReceipt(response)
                 try self.persist(outcome: "active")
                 if observed.isTerminal || observed.remainingActions == 0 {
@@ -186,18 +190,30 @@ final class ARC3SessionStore: ObservableObject {
     func explore(maxActions: Int = 8) {
         guard !isWorking, isSessionActive, let id = ownerID, let client = transport else { return }
         guard (1...8).contains(maxActions) else { error = "Choose an exploration batch from 1 to 8 actions."; return }
-        isWorking = true; error = nil; status = "Exploring observed transitions, up to \(maxActions) actions…"
+        isWorking = true; error = nil; status = "Planning from observed transitions, up to \(maxActions) actions…"
         operation = Task { [weak self] in
             guard let self else { return }
             do {
-                for _ in 0..<maxActions {
+                for index in 0..<maxActions {
                     guard self.ownerID == id, !Task.isCancelled, let current = self.observation else { return }
-                    let choice = try self.nextExperiment(current)
-                    try await self.perform(action: choice.action, x: choice.x, y: choice.y, id: id, client: client)
+                    let decision = ARC3Planner.plan(current: current, transitions: self.transitions,
+                        previous: self.latestPlan, remainingBatch: maxActions - index, attempts: self.attempts)
+                    self.latestPlan = decision
+                    guard let choice = decision.action else {
+                        // A planning pause keeps the episode open for explicit
+                        // manual action; it never consumes an implicit RESET.
+                        try self.persist(outcome: "active")
+                        self.isWorking = false; self.operation = nil
+                        self.status = "Planning paused. \(decision.reason)"
+                        return
+                    }
+                    self.status = "\(choice.title) · \(decision.reason)"
+                    try await self.perform(action: choice.action, x: choice.x, y: choice.y,
+                        id: id, client: client, decision: decision)
                 }
                 guard self.ownerID == id else { return }
                 self.isWorking = false; self.operation = nil
-                self.status = "Exploration batch complete. Episode paused; transitions remain task-local."
+                self.status = "Planning batch complete. Episode paused; observed transitions remain task-local."
             } catch { if self.ownerID == id { self.fail(error) } }
         }
     }
@@ -210,7 +226,7 @@ final class ARC3SessionStore: ObservableObject {
     func resetForProfile(outputDirectory: URL? = nil) {
         if ownerID != nil { retire(outcome: "profile-reset", message: "Profile changed.") }
         if let outputDirectory { self.outputDirectory = outputDirectory }
-        observation = nil; initialObservation = nil; transitions = []; attempts = []; predictions = [:]; visits = [:]
+        observation = nil; initialObservation = nil; transitions = []; attempts = []; predictions = [:]; latestPlan = nil
         receiptURL = nil; bridgeReceiptPath = nil; error = nil; games = []; selectedGameID = nil
         status = "Discover local ARC3 games for this profile."
     }
@@ -227,22 +243,44 @@ final class ARC3SessionStore: ObservableObject {
         } else if x != nil || y != nil { throw ARC3RuntimeError.invalid("Only ACTION6 accepts coordinates.") }
     }
 
-    private func perform(action: Int, x: Int?, y: Int?, id: UUID, client: any ARC3Transport) async throws {
+    private func perform(action: Int, x: Int?, y: Int?, id: UUID, client: any ARC3Transport,
+                         decision: ARC3PlanDecision? = nil) async throws {
         guard ownerID == id, !Task.isCancelled, let before = observation else { throw ARC3RuntimeError.stopped }
         try validateAction(action, x: x, y: y, current: before)
+        if let decision {
+            guard decision.controller.isValid, decision.controller.domain == "arc3",
+                  decision.controller.contextID == "\(before.gameID)|level:\(before.levelsCompleted)",
+                  decision.controller.lane != .stop, decision.gameID == before.gameID,
+                  decision.level == before.levelsCompleted, decision.baseFrameDigest == before.frameDigest,
+                  decision.baseDispatches == before.dispatches,
+                  decision.action == ARC3PlannedAction(action: action, x: x, y: y) else {
+                throw ARC3RuntimeError.invalid("The ARC3 plan no longer matches this observation or action.")
+            }
+        }
         // Freeze the expectation and source observation before dispatch. This
         // remains in the episode even if no trustworthy response ever arrives.
         let key = predictionKey(before, action: action, x: x, y: y)
-        let predicted = predictions[key]
+        let predicted = decision?.expectedDigest ?? predictions[key]
         let request = ARC3Request(command: "step", action: action, x: x, y: y)
         attempts.append(ARC3ActionAttempt(id: request.id, proposedAt: Date(), baseFrameDigest: before.frameDigest,
-            baseDispatches: before.dispatches, action: action, x: x, y: y, predictedDigest: predicted, state: "requested"))
+            baseDispatches: before.dispatches, action: action, x: x, y: y, predictedDigest: predicted,
+            state: "requested", decision: decision))
         try persist(outcome: "active")
         let response = try await client.request(request)
         guard ownerID == id, !Task.isCancelled else { return }
         try checkResponse(response, request: request)
         let after = try checkedObservation(response, previous: before)
-        markObserved(requestID: request.id, digest: after.frameDigest)
+        let outcome: String
+        if action == 0 { outcome = "explicit-reset" }
+        else if after.state == "WIN" { outcome = "environment-win" }
+        else if after.state == "GAME_OVER" { outcome = "environment-game-over" }
+        else if after.levelsCompleted > before.levelsCompleted { outcome = "environment-level-progress" }
+        else if before.frameDigest == after.frameDigest { outcome = "unchanged-visible-frame" }
+        else if transitions.contains(where: { $0.before.levelsCompleted == after.levelsCompleted &&
+            ($0.beforeDigest == after.frameDigest || $0.afterDigest == after.frameDigest) }) {
+            outcome = "revisited-visible-frame"
+        } else { outcome = "new-visible-frame" }
+        markObserved(requestID: request.id, digest: after.frameDigest, outcome: outcome)
         let verdict: ARC3PredictionVerdict
         if before.levelsCompleted != after.levelsCompleted || action == 0 || after.isTerminal {
             verdict = .inconclusive
@@ -250,7 +288,7 @@ final class ARC3SessionStore: ObservableObject {
             verdict = predicted == after.frameDigest ? .supported : .refuted
         } else { verdict = .observed }
         if action == 0 || before.levelsCompleted != after.levelsCompleted {
-            predictions.removeAll(); visits.removeAll()
+            predictions.removeAll(); latestPlan = nil
         }
         if verdict == .refuted || verdict == .inconclusive {
             predictions[key] = nil
@@ -259,7 +297,6 @@ final class ARC3SessionStore: ObservableObject {
                     x: transitions[index].x, y: transitions[index].y) == key { transitions[index].invalidated = true }
             }
         } else { predictions[key] = after.frameDigest }
-        visits[key, default: 0] += 1
         transitions.append(ARC3Transition(id: UUID(), beforeDigest: before.frameDigest, afterDigest: after.frameDigest,
             action: action, x: x, y: y, predictedDigest: predicted, verdict: verdict, invalidated: verdict == .refuted,
             before: before, after: after))
@@ -274,27 +311,11 @@ final class ARC3SessionStore: ObservableObject {
         "\(observation.gameID)|\(observation.levelsCompleted)|\(observation.frameDigest)|\(action)|\(x ?? -1)|\(y ?? -1)"
     }
 
-    private func markObserved(requestID: String, digest: String) {
+    private func markObserved(requestID: String, digest: String, outcome: String) {
         guard let index = attempts.firstIndex(where: { $0.id == requestID }) else { return }
         attempts[index].state = "observed"
         attempts[index].actualDigest = digest
-    }
-
-    private func nextExperiment(_ current: ARC3Observation) throws -> (action: Int, x: Int?, y: Int?) {
-        var choices: [(action: Int, x: Int?, y: Int?)] = []
-        for action in current.availableActions.sorted() where action != 0 {
-            if action == 6 {
-                for y in stride(from: 8, through: 56, by: 16) {
-                    for x in stride(from: 8, through: 56, by: 16) { choices.append((action, x, y)) }
-                }
-            } else { choices.append((action, nil, nil)) }
-        }
-        guard let choice = choices.enumerated().min(by: { left, right in
-            let l = visits[predictionKey(current, action: left.element.action, x: left.element.x, y: left.element.y), default: 0]
-            let r = visits[predictionKey(current, action: right.element.action, x: right.element.x, y: right.element.y), default: 0]
-            return l == r ? left.offset < right.offset : l < r
-        })?.element else { throw ARC3RuntimeError.invalid("No legal exploration action is available.") }
-        return choice
+        attempts[index].outcome = outcome
     }
 
     private func checkResponse(_ response: ARC3Response, request: ARC3Request) throws {
@@ -363,13 +384,15 @@ final class ARC3SessionStore: ObservableObject {
         let latest: ARC3Observation?
         let transitions: [ARC3Transition]
         let attempts: [ARC3ActionAttempt]
+        let latestPlan: ARC3PlanDecision?
         let bridgeReceiptPath: String?
     }
 
     private func persist(outcome: String) throws {
         guard let episodeDirectory, let activeGameID, let startedAt else { return }
         let episode = Episode(gameID: activeGameID, startedAt: startedAt, updatedAt: Date(), outcome: outcome,
-            initial: initialObservation, latest: observation, transitions: transitions, attempts: attempts, bridgeReceiptPath: bridgeReceiptPath)
+            initial: initialObservation, latest: observation, transitions: transitions, attempts: attempts,
+            latestPlan: latestPlan, bridgeReceiptPath: bridgeReceiptPath)
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
         let data = try encoder.encode(episode)
         guard transitions.count <= 63, attempts.count <= 64, data.count <= 4 * 1024 * 1024 else {

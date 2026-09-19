@@ -24,6 +24,7 @@ struct DocumentWorkHistory: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HamptonTaskWorkCard(store: store)
+            HamptonDocumentControlView(store: store)
             DocumentProcedureLibraryView(store: store)
             if let error = store.documentWorkMessage ?? store.documentWork.loadError {
                 Text(error).foregroundStyle(.secondary).font(.caption)
@@ -50,6 +51,10 @@ struct DocumentWorkHistory: View {
                                 Text(record.updatedAt, style: .time).font(.caption2).foregroundStyle(.secondary)
                             }
                             Text(record.detail).font(.caption2).foregroundStyle(.secondary)
+                            if let control = record.q2eDecision {
+                                Text("Approach: \(control.lane.title) · decision \(control.revision)")
+                                    .font(.caption2).foregroundStyle(.secondary)
+                            }
                             DocumentFeedbackControls(store: store, record: record)
                             if let use = record.procedureUse {
                                 Text("Procedure v\(use.revision) · \(store.documentProcedures.procedure(matching: use)?.title ?? use.id)")

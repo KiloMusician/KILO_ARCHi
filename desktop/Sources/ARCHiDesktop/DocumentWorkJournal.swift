@@ -50,6 +50,8 @@ struct DocumentWorkRecord: Codable, Equatable, Identifiable, Sendable {
     var procedureUse: DocumentProcedureUse? = nil
     /// Monotonic counterexample: a later Helpful verdict cannot erase it.
     var procedureUseRejected: Bool? = nil
+    /// Exact native control decision captured before dispatch; nil on older work.
+    var q2eDecision: HamptonQ2EDecision? = nil
 
     var hasPendingFeedbackUsageSync: Bool {
         feedback.map { feedbackUsageSyncedID != $0.id } ?? false
@@ -191,6 +193,7 @@ final class DocumentWorkJournal: ObservableObject {
               old.selectionStart == new.selectionStart, old.selectionLength == new.selectionLength,
               old.mustBeShorter == new.mustBeShorter, old.preserveNumbersAndLinks == new.preserveNumbersAndLinks,
               old.procedureUse == new.procedureUse,
+              old.q2eDecision == new.q2eDecision,
               old.procedureUseRejected != true || new.procedureUseRejected == true,
               old.createdAt == new.createdAt, new.updatedAt >= old.updatedAt else {
             throw DocumentWorkJournalError.invalid("The bound request, target, requirements or time changed.")
@@ -259,6 +262,12 @@ final class DocumentWorkJournal: ObservableObject {
               record.procedureUse != nil || record.procedureUseRejected == nil else {
             throw DocumentWorkJournalError.invalid("Invalid procedure reference or counterexample.")
         }
+        if let decision = record.q2eDecision {
+            guard decision.isValid, decision.domain == "document-revision",
+                  decision.contextID == record.sourceDigest, decision.lane != .stop else {
+                throw DocumentWorkJournalError.invalid("The native control decision does not match this dispatched document work.")
+            }
+        }
         if record.procedureUse != nil,
            [.undoing, .undone].contains(record.state) || record.feedback.map({ $0.verdict != .helpful }) == true {
             guard record.procedureUseRejected == true else {
@@ -307,7 +316,7 @@ final class DocumentWorkJournal: ObservableObject {
         let fields: Set<String> = ["id", "requestID", "provider", "targetID", "sourceDigest", "sourceRevision",
             "selectionStart", "selectionLength", "mustBeShorter", "preserveNumbersAndLinks", "createdAt", "updatedAt",
             "state", "proposedDigest", "expectedAfterDigest", "actualAfterDigest", "afterRevision", "checks", "detail",
-            "learning", "feedback", "feedbackUsageSyncedID", "procedureUse", "procedureUseRejected"]
+            "learning", "feedback", "feedbackUsageSyncedID", "procedureUse", "procedureUseRejected", "q2eDecision"]
         guard rows.allSatisfy({ row in
             guard Set(row.keys).isSubset(of: fields), let checks = row["checks"] as? [[String: Any]] else { return false }
             return checks.allSatisfy { Set($0.keys) == ["id", "title", "passed"] }

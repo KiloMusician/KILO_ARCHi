@@ -44,3 +44,7 @@ Saved methods now support editing into immutable new versions, explicit change n
 ## Task memory and method outcomes — 19 September 2026
 
 Kept lessons now support explicit activity scopes, with local conversation/context cleared when activity changes. Work together exposes these scopes and retained revision experience. Available matching methods use a bounded Beta(1,1) feedback ordering; selection and Apply remain explicit. v8 preferences read older formats while preserving existing nil-scope snapshot bindings. Normal compilation and installation completed; the new controls were observed in the installed app. No test suite or model generation was run for this increment. This remains a source-only draft.
+
+## Shared native Q2E control — 19 September 2026
+
+Added an operational controller adapted from the Hampton QState pressure/coupling mechanism and Beta outcome critic. It now drives document revision preparation/local Qwen requests and bounded ARC3 action planning, using frozen dispatch decisions and subsequent observed/reviewed feedback. ARC3 uses a bounded observation graph and visible-region candidates, replanning after each action. Existing profile, Qwen-first routing, review and action budgets remain in place. Normal compilation and installation completed; the new Work together controls were observed in the installed app. No tests, model generation or ARC3 episode were run for this increment. Learned coupling, model training and measured generalization are not established. Source-only draft, not a release.

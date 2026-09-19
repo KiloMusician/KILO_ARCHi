@@ -16,6 +16,7 @@ struct AssistantRequest: Sendable {
     let localLessons: [LessonSnapshot]
     let localProfile: PersonalContextSnapshot?
     let localConversation: [AssistantConversationExchange]
+    let localControl: HamptonQ2EDecision?
     let revisionTarget: RevisionTarget?
     let companion: LocalQiMon.Character?
     var selection: DocumentSelection? = nil
@@ -27,18 +28,20 @@ struct AssistantRequest: Sendable {
          placementRevision: UInt64, tone: String, replyLength: Double, selection: DocumentSelection? = nil,
          role: EvolutionRole? = nil, helpStyle: EvolutionHelpStyle? = nil,
          localLessons: [LessonSnapshot] = [], revisionTarget: RevisionTarget? = nil,
-         companion: LocalQiMon.Character? = nil, localConversation: [AssistantConversationExchange] = [], localProfile: PersonalContextSnapshot? = nil) {
+         companion: LocalQiMon.Character? = nil, localConversation: [AssistantConversationExchange] = [],
+         localProfile: PersonalContextSnapshot? = nil, localControl: HamptonQ2EDecision? = nil) {
         self.init(prompt: prompt, sourceName: sourceName, sourceText: sourceText,
             sourceRevision: sourceRevision, placementRevision: placementRevision,
             settings: AssistantSettingsSnapshot(tone: tone, replyLength: replyLength, role: role, helpStyle: helpStyle),
             selection: selection, localLessons: localLessons, revisionTarget: revisionTarget, companion: companion,
-            localConversation: localConversation, localProfile: localProfile)
+            localConversation: localConversation, localProfile: localProfile, localControl: localControl)
     }
 
     init(prompt: String, sourceName: String?, sourceText: String, sourceRevision: UInt64,
          placementRevision: UInt64, settings: AssistantSettingsSnapshot, selection: DocumentSelection? = nil,
          localLessons: [LessonSnapshot] = [], revisionTarget: RevisionTarget? = nil,
-         companion: LocalQiMon.Character? = nil, localConversation: [AssistantConversationExchange] = [], localProfile: PersonalContextSnapshot? = nil) {
+         companion: LocalQiMon.Character? = nil, localConversation: [AssistantConversationExchange] = [],
+         localProfile: PersonalContextSnapshot? = nil, localControl: HamptonQ2EDecision? = nil) {
         self.prompt = prompt
         self.sourceName = sourceName
         self.sourceText = sourceText
@@ -49,6 +52,7 @@ struct AssistantRequest: Sendable {
         self.localLessons = localLessons
         self.localProfile = localProfile
         self.localConversation = localConversation
+        self.localControl = localControl
         self.revisionTarget = revisionTarget
         self.companion = companion
     }
@@ -60,6 +64,12 @@ struct AssistantRequest: Sendable {
     var hasValidLocalLessons: Bool { NativePreferenceDocument.validateLessonSnapshots(localLessons) }
     var hasValidLocalProfile: Bool { localProfile?.isValid ?? true }
     var hasValidLocalConversation: Bool { AssistantConversation.validate(localConversation) }
+    var hasValidLocalControl: Bool {
+        guard let localControl else { return true }
+        guard let revisionTarget else { return false }
+        return localControl.isValid && localControl.domain == "document-revision"
+            && localControl.contextID == revisionTarget.sourceDigest && localControl.lane != .stop
+    }
 
     var localConversationDigest: String? { AssistantConversation.digest(for: localConversation) }
     var localConversationUTF8Bytes: Int { AssistantConversation.utf8ByteCount(for: localConversation) }
@@ -69,18 +79,39 @@ struct AssistantRequest: Sendable {
         AssistantRequest(prompt: prompt, sourceName: sourceName, sourceText: sourceText,
             sourceRevision: sourceRevision, placementRevision: placementRevision, settings: settings,
             selection: selection, localLessons: localLessons, revisionTarget: revisionTarget,
-            companion: companion, localConversation: exchanges, localProfile: localProfile)
+            companion: companion, localConversation: exchanges, localProfile: localProfile, localControl: localControl)
     }
 
-    /// The common v4 input is unchanged. Only local requests add this separately
-    /// versioned conversation envelope; no conversation text crosses to Codex.
+    /// The common v4 input is unchanged. Local context and the fixed native work
+    /// instruction stay on the local route; none of them cross to Codex.
     var localContextInput: String {
         guard var value = try? JSONDecoder().decode(JSONValue.self, from: Data(input.utf8)).object else { return input }
         if let conversation = AssistantConversation.modelInput(for: localConversation) { value["localConversation"] = conversation }
         if let localProfile { value["localProfile"] = localProfile.modelInput }
-        if localProfile == nil && localConversation.isEmpty { return input }
+        let workControl = localWorkControl
+        if let workControl { value["workControl"] = workControl }
+        if localProfile == nil && localConversation.isEmpty && workControl == nil { return input }
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
         return String(decoding: (try? encoder.encode(JSONValue.object(value))) ?? Data(), as: UTF8.self)
+    }
+
+    /// Only application-authored lane guidance reaches generation. Reasons,
+    /// scores, source bindings and historical observations remain native data.
+    private var localWorkControl: JSONValue? {
+        guard let localControl, hasValidLocalControl else { return nil }
+        let instruction: String
+        switch localControl.lane {
+        case .retain:
+            instruction = "Follow the user's supplied method and requirements."
+        case .expand:
+            instruction = "Propose one bounded solution to the current request, following the user's chosen method and requirements when supplied."
+        case .repair:
+            instruction = "Reassess the approach and check the current stated constraints before proposing a corrected solution."
+        case .stop:
+            return nil
+        }
+        return .object(["version": .string(localControl.version), "lane": .string(localControl.lane.rawValue),
+                        "instruction": .string(instruction)])
     }
 
     var hasValidRevisionTarget: Bool {

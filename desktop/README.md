@@ -61,3 +61,7 @@ In Work together, open Saved procedures and choose Edit method. Save a new candi
 ## Teach an activity
 
 Work together now offers Teach this activity. Keep a lesson for Chat, Reading documents, Revising passages, or a matching topic phrase. Source restrictions and expiry still apply. Saved methods are ordered by matching requirements and their own version’s recorded helpful/correction outcomes. See [task memory and outcomes](../docs/native-task-memory-outcomes.md).
+
+## Shared Q2E work control
+
+Document revision and ARC3 planning now use one versioned native controller. Existing observations and reviewed outcomes select reuse, an alternative, correction or pause. Work together offers Prepare next step; local Qwen receives the captured approach on Send. ARC3 plans up to eight actions, observes and replans, retaining its decisions and outcomes. See [native Q2E control](../docs/native-q2e-control.md) for coordinates, feedback and bounds.

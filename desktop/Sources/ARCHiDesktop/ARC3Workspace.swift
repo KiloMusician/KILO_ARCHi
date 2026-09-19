@@ -29,7 +29,7 @@ struct ARC3Workspace: View {
             VStack(alignment: .leading, spacing: 6) {
                 Label("Interactive ARC3", systemImage: "square.grid.3x3.fill").font(.title2)
                 Text("Observe. Try an action. Learn what changed.").foregroundStyle(.secondary)
-                Text("Runs your installed public environments locally. ARCHi explores from the visible frame and legal actions; game source is never supplied to its exploration policy.")
+                Text("Runs your installed public environments locally. ARCHi plans from visible frames, legal actions and observed transitions; game source is never supplied to its planning policy.")
                     .font(.callout).foregroundStyle(.secondary)
             }
             HStack {
@@ -58,11 +58,14 @@ struct ARC3Workspace: View {
                     .disabled(session.selectedGameID == nil || session.isWorking || session.isSessionActive || owner.isWorking)
                     .accessibilityIdentifier("arc3.start")
             }
-            Text("The initial reset counts toward this budget. Exploration uses up to eight actions per request and then pauses.")
+            Text("The initial reset counts toward this budget. Explore replans after each observation, uses up to eight actions, and pauses earlier when no useful next step remains.")
                 .font(.caption).foregroundStyle(.secondary)
             Label(session.status, systemImage: session.isWorking ? "hourglass" : "circle.dotted")
                 .textSelection(.enabled).accessibilityIdentifier("arc3.status")
             if let error = session.error { Text(error).foregroundStyle(.orange).textSelection(.enabled) }
+            if let plan = session.latestPlan {
+                ARC3PlanView(plan: plan, outcome: session.attempts.last(where: { $0.decision == plan })?.outcome)
+            }
             if let observation = session.observation {
                 HStack {
                     Text(observation.state).font(.headline)
@@ -83,7 +86,15 @@ struct ARC3Workspace: View {
                         .accessibilityIdentifier("arc3.stop")
                 }
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Manual actions").font(.headline)
+                    HStack {
+                        Text("Manual actions").font(.headline)
+                        Spacer()
+                        Button("Reset · 1 action") {
+                            guard owner.prepareARC3Action() else { return }
+                            session.step(action: 0)
+                        }.disabled(session.isWorking || !session.isSessionActive || owner.isWorking)
+                            .accessibilityIdentifier("arc3.reset")
+                    }
                     Text("Action meanings are discovered within each environment.").font(.caption).foregroundStyle(.secondary)
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 92))], alignment: .leading) {
                         ForEach(observation.availableActions, id: \.self) { action in
@@ -130,7 +141,7 @@ struct ARC3Workspace: View {
                 Button("Show episode record") { NSWorkspace.shared.activateFileViewerSelecting([receipt]) }
                     .accessibilityIdentifier("arc3.receipt")
             }
-            Text("Progress comes from the environment. Transition evidence is task-local; it does not award companion growth or establish an ARC Prize score. This explorer does not call a model.")
+            Text("Progress comes from the environment. This authored planning policy uses task-local transition evidence; it is not a trained global quotient, does not award companion growth, and establishes no ARC Prize score. It does not call a model.")
                 .font(.caption).foregroundStyle(.secondary)
         }.padding(18).modifier(WorkspaceSurface())
     }
@@ -140,6 +151,21 @@ struct ARC3Workspace: View {
         panel.canChooseFiles = false; panel.canChooseDirectories = true; panel.allowsMultipleSelection = false
         panel.message = "Choose the ARC runtime folder containing .venv/bin/python and environment_files."
         if panel.runModal() == .OK, let url = panel.url { session.configureRuntimeRoot(url) }
+    }
+}
+
+private struct ARC3PlanView: View {
+    let plan: ARC3PlanDecision
+    let outcome: String?
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Last plan · \(plan.action?.title ?? "Pause for review")").font(.callout.bold())
+            Text(plan.goal).font(.caption)
+            Text(plan.reason).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+            if let outcome {
+                Text("Observed: \(outcome.replacingOccurrences(of: "-", with: " "))").font(.caption)
+            }
+        }.accessibilityIdentifier("arc3.plan")
     }
 }
 
@@ -179,6 +205,9 @@ struct ARC3AssistantReply: View {
         VStack(alignment: .leading, spacing: 10) {
             Label("ARCHi · Interactive ARC3", systemImage: "square.grid.3x3.fill").font(.headline)
             Text(session.status).textSelection(.enabled)
+            if let plan = session.latestPlan {
+                ARC3PlanView(plan: plan, outcome: session.attempts.last(where: { $0.decision == plan })?.outcome)
+            }
             if let observation = session.observation {
                 ARC3FrameView(frame: observation.frame).frame(width: 220, height: 220)
                 Text("\(observation.state) · \(observation.dispatches)/\(observation.budget) actions · \(observation.levelsCompleted)/\(observation.winLevels) levels").font(.caption)

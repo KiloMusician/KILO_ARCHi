@@ -157,7 +157,7 @@ final class HamptonReasonsAssistant: AssistantClient {
         var receipts: [HamptonRoleReceipt] = []
         do {
             guard request.hasValidSelection, request.hasValidRevisionTarget, request.hasValidLocalLessons,
-                  request.hasValidLocalConversation, request.hasValidLocalProfile else {
+                  request.hasValidLocalConversation, request.hasValidLocalProfile, request.hasValidLocalControl else {
                 throw QwenFailure.invalidResponse
             }
             guard !request.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
