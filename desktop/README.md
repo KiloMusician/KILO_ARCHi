@@ -53,3 +53,7 @@ An interrupted Undo still permits syncing or withdrawing an existing review, but
 ## Reviewed document procedures
 
 After a helpful applied edit, explicitly write and Keep a procedure. Use it for a later selected passage with matching requirements, then review the fresh result. Exact version references and retained counterexamples prevent corrected or withdrawn methods from silently returning. See [operation, retention and limits](../docs/native-document-procedures.md).
+
+## Revise a saved method
+
+In Work together, open Saved procedures and choose Edit method. Save a new candidate version with an explicit change note and helpful applied support; earlier versions and request bindings remain in history. A blocked method requires later corrective work. Only the latest version is offered for new preparation. See [document procedures](../docs/native-document-procedures.md) for retention and v1/v2 archive compatibility.

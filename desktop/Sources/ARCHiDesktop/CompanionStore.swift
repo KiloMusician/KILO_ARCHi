@@ -1112,8 +1112,53 @@ final class CompanionStore: ObservableObject {
         } catch { documentWorkMessage = "Procedure withdrawal was not saved: \(error.localizedDescription)" }
     }
 
+    /// A revision retains a named helpful result and checks its lesson/ancestor
+    /// dependencies with the same live owners used for ordinary procedure reuse.
+    func revisionSourceRecords(for use: DocumentProcedureUse) -> [DocumentWorkRecord] {
+        guard canKeepDocumentProcedure, pendingDocumentReceipt == nil, documentWork.isCurrentOnDisk,
+              documentProcedures.loadError == nil,
+              let previous = documentProcedures.procedure(matching: use) else { return [] }
+        let previousUnavailable = documentProcedureUnavailable(use) != nil
+        return documentWork.records.filter { record in
+            guard canReviewDocument(record),
+                  documentProcedures.canSupportRevision(of: use, with: record, records: documentWork.records),
+                  record.procedureUse.map({ documentProcedureUnavailable($0) == nil }) ?? true else { return false }
+            if previousUnavailable && (record.id == previous.originRecordID || record.createdAt <= previous.createdAt) { return false }
+            let lessons = record.learning?.usedLessons ?? []
+            if !lessons.isEmpty {
+                guard let disk = try? NativePreferencePersistence.read(preferenceURL), disk.baseline == preferenceBaseline else { return false }
+            }
+            return lessons.allSatisfy { lesson in
+                keptLessons.contains { kept in
+                    let snapshot = LessonSnapshot(lesson: kept)
+                    return lesson.matches(snapshot: snapshot) && currentKeptLesson(matching: snapshot) != nil
+                        && (kept.source == nil || kept.source == currentLessonSource)
+                }
+            }
+        }.sorted { $0.updatedAt > $1.updatedAt }
+    }
+
+    @discardableResult
+    func reviseDocumentProcedure(_ use: DocumentProcedureUse, title: String, instruction: String,
+                                 changeNote: String, recordID: String) -> Bool {
+        guard let record = revisionSourceRecords(for: use).first(where: { $0.id == recordID }) else {
+            documentWorkMessage = "Choose a current helpful applied result. Complete and review corrective work before revising a blocked method."
+            return false
+        }
+        do {
+            let revision = try documentProcedures.revise(binding: use, title: title, instruction: instruction,
+                changeNote: changeNote, from: record, records: documentWork.records)
+            documentWorkMessage = "Version \(revision.revision) saved as a candidate. Earlier versions and their outcomes remain in history. Choose Use when you want to try it."
+            return true
+        } catch {
+            documentWorkMessage = "New version was not saved: \(error.localizedDescription)"
+            return false
+        }
+    }
+
     func canPrepareDocumentProcedure(_ procedure: DocumentProcedure) -> Bool {
         !isShuttingDown && !isWorking && requestsRevision && procedure.matches(requirements: documentRequirements)
+            && documentProcedures.latestProcedures.contains(procedure)
             && textSelection?.matches(text: sharedText, sourceRevision: sourceRevision) == true
             && documentProcedureUnavailable(procedure.binding) == nil
     }

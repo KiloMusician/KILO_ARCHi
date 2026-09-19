@@ -21,6 +21,11 @@ or change the companion's Seed/body identity.
    selected assistant route. Preparation alone does not send or edit anything.
 4. Review the new proposal, Apply if appropriate, and record Helpful or Needs
    correction. Undo and withdrawal remain separate explicit controls.
+5. In **Saved procedures**, choose **Edit method**, update the name/instruction,
+   describe what changed, and explicitly select a helpful applied result as
+   support. **Save new version** retains a new candidate with its own binding.
+   Earlier versions remain under **Previous versions**. Saving never sends a
+   request or changes a prepared or in-flight instruction.
 
 Changing the prepared instruction, passage, source, requirements or reply mode
 blocks procedure Send until the user chooses it again or selects **Detach
@@ -32,7 +37,7 @@ current prompt, not automatic background memory injection.
 
 ## Evidence and correction
 
-- Every saved procedure has an immutable v1 ID, content digest, requirements,
+- Every saved procedure version has an immutable family ID/version, content digest, requirements,
   origin document-record ID and exact helpful-review event. Saving needs a
   verified **applied** result; undone, incomplete, unreviewed and legacy records
   without captured learning references are ineligible.
@@ -47,9 +52,16 @@ current prompt, not automatic background memory injection.
 - A Needs correction, Withdraw review or Undo on a reused result permanently marks
   that procedure version with a counterexample. A later Helpful verdict cannot
   erase the marker. Original-review changes also invalidate its exact event.
-- The current library supports Keep and Withdraw, not in-place instruction edits
-  or re-certification. New instructions require a separately reviewed candidate.
-  A failed version cannot be revived by claiming its failed reuse as new support.
+- Editing appends v2, v3 and later versions. The change note, preceding version
+  binding and selected helpful review are retained. A blocked or withdrawn version
+  needs different, later helpful applied work before a replacement candidate can
+  be saved; a failed reuse or withdrawn supporting lesson is ineligible. Each
+  version keeps its own counterexamples. A revision is a candidate, not certification
+  that its new instruction works. The preceding version is lineage history;
+  the chosen result supplies its actual evidence dependencies.
+- Only the latest version is offered for new preparation. A request already
+  prepared or sent keeps its exact old version, subject to that version's normal
+  availability checks. Earlier versions remain inspectable and withdrawable.
 - Activity map shows the captured procedure version and retained counterexample.
   Usage continues to account for actual requests; Keep and Use do not invent a
   model invocation or mark a task useful.
@@ -58,9 +70,12 @@ current prompt, not automatic background memory injection.
 
 `preferences.document-procedures.json` belongs to the active native profile. It
 contains explicitly authored names/instructions, requirements and provenance IDs,
-with a 64-procedure/512-KiB limit. Atomic writes use a cooperative lock, fresh disk
+with a 64-total-version/512-KiB limit. Atomic writes use a cooperative lock, fresh disk
 comparison and private file permissions. Unknown fields, invalid references,
 oversized files and symlinks are rejected without overwriting existing bytes.
+The reader accepts existing v1 archives without rewriting them. The next explicit
+save writes v2, preserving v1 content bindings. Revision chains must be complete
+and bind the exact preceding version. An older app does not understand v2 archives.
 
 The existing `preferences.document-work.json` remains a metadata journal. Its
 optional `procedureUse` and monotonic `procedureUseRejected` fields are backward
@@ -82,8 +97,8 @@ engineering translation of the procedure-learning priority in the
 ARC3 master register is a research inventory, not authorization to connect every
 historical equation as a live controller.
 
-Remaining work includes safe procedure revision and re-admission, task-specific
-capability measurements, more typed tasks, causal comparisons on new examples,
+Remaining work includes automatic procedure induction, task-specific
+capability measurements, more typed tasks, useful transfer across tasks,
 and ARC3 planning adapters. No JEPA model, general Q2E updater, semantic critic or
 automatic evolution award was added. Validation and installed observations are
 recorded separately in the developer ledger.

@@ -36,3 +36,7 @@ ARCHi manages startup of an installed local Ollama runtime and selects Qwen firs
 ## Reviewed document procedures — 19 September 2026
 
 Work together now supports explicit user-authored procedure candidates from helpful applied edits, exact version and requirement bindings on later requests, and persistent rejection after correction, withdrawal or Undo. Source reviews and supporting lessons are rechecked before reuse and Apply. Saved & this visit explains the separate local files and current backup exclusions. Native focused checks passed: 10 XCTest and 18 Swift Testing cases; no full suite or live generation. The single installed app exposes Saved procedures in dark mode while preserving selected companion and Unity files. This is a bounded reuse workflow, not model training, automatic skill certification or a new public release.
+
+## Procedure revisions — 19 September 2026
+
+Saved methods now support editing into immutable new versions, explicit change notes and support selection, with prior-version inspection and withdrawal. Existing v1 content bindings remain stable; an explicit save writes the v2 archive. A changed instruction remains a candidate. Current evidence is a normal desktop build/install; no new tests or model-generation calls were run. Earlier test results retain their original source scope. This updates the existing source-only draft, with no merge or release.

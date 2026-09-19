@@ -44,6 +44,10 @@ struct DocumentProcedure: Codable, Equatable, Identifiable, Sendable {
     let originFeedbackID: String
     let createdAt: Date
     var withdrawn: Bool
+    /// Revision lineage is history, distinct from the evidence dependency below.
+    /// Nil fields preserve the encoded bytes and bindings of existing v1 methods.
+    var supersedes: DocumentProcedureUse? = nil
+    var revisionNote: String? = nil
 
     var binding: DocumentProcedureUse {
         // Withdrawal changes availability, never the identity of an old request.
@@ -56,13 +60,21 @@ struct DocumentProcedure: Codable, Equatable, Identifiable, Sendable {
     }
 
     var isValid: Bool {
-        UUID(uuidString: id) != nil && revision == 1
+        UUID(uuidString: id) != nil && revision > 0
             && ProcedureValidation.text(title, characters: 80, bytes: 320)
             && ProcedureValidation.text(instruction, characters: 1_200, bytes: 4_800)
             && ProcedureValidation.text(originRecordID, characters: 384, bytes: 1_536)
             && UUID(uuidString: originFeedbackID) != nil
             && createdAt.timeIntervalSinceReferenceDate.isFinite
             && createdAt > .distantPast && createdAt < .distantFuture
+            && validRevision
+    }
+
+    private var validRevision: Bool {
+        if revision == 1 { return supersedes == nil && revisionNote == nil }
+        guard let supersedes, let revisionNote else { return false }
+        return supersedes.isValid && supersedes.id == id && supersedes.revision == revision - 1
+            && ProcedureValidation.text(revisionNote, characters: 600, bytes: 2_400)
     }
 
     func matches(requirements: DocumentWorkRequirements) -> Bool {
@@ -96,7 +108,7 @@ final class DocumentProcedureLibrary: ObservableObject {
     private var requiresRecovery = false
     static let maximumProcedures = 64
     private static let maximumBytes = 512 * 1_024
-    private static let schema = "archi-document-procedures/v1"
+    private static let schema = "archi-document-procedures/v2"
 
     private struct Archive: Codable {
         let schema: String
@@ -119,6 +131,65 @@ final class DocumentProcedureLibrary: ObservableObject {
     func procedure(matching binding: DocumentProcedureUse) -> DocumentProcedure? {
         guard binding.isValid else { return nil }
         return procedures.first { $0.binding == binding }
+    }
+
+    var latestProcedures: [DocumentProcedure] {
+        procedures.filter { value in !procedures.contains { $0.id == value.id && $0.revision > value.revision } }
+    }
+
+    func versions(of id: String) -> [DocumentProcedure] {
+        procedures.filter { $0.id == id }.sorted { $0.revision > $1.revision }
+    }
+
+    /// A blocked version needs a later, independently helpful applied result.
+    /// Its former origin or failed reuse cannot be recycled as corrective support.
+    func canSupportRevision(of binding: DocumentProcedureUse, with record: DocumentWorkRecord,
+                            records: [DocumentWorkRecord]) -> Bool {
+        guard Set(records.map(\.id)).count == records.count,
+              let previous = procedure(matching: binding), latestProcedures.contains(previous),
+              previous.revision < UInt64.max,
+              records.filter({ $0.id == record.id }) == [record], Self.validOrigin(record),
+              record.procedureUseRejected != true else { return false }
+        if let dependency = record.procedureUse {
+            guard let parent = procedure(matching: dependency), availability(of: parent, records: records) == nil else { return false }
+        }
+        if availability(of: previous, records: records) != nil {
+            let lastProblem = records.filter {
+                ($0.procedureUse == binding && ($0.procedureUseRejected == true || [.undoing, .undone].contains($0.state)
+                    || $0.feedback.map { $0.verdict != .helpful } == true))
+                || ($0.id == previous.originRecordID && (!Self.validOrigin($0) || $0.feedback?.id != previous.originFeedbackID))
+            }.map(\.updatedAt).max() ?? previous.createdAt
+            guard record.id != previous.originRecordID,
+                  record.createdAt > max(previous.createdAt, lastProblem) else { return false }
+        }
+        return true
+    }
+
+    @discardableResult
+    func revise(binding: DocumentProcedureUse, title: String, instruction: String, changeNote: String,
+                from record: DocumentWorkRecord, records: [DocumentWorkRecord]) throws -> DocumentProcedure {
+        try assertCurrent()
+        guard canSupportRevision(of: binding, with: record, records: records),
+              let previous = procedure(matching: binding), let feedback = record.feedback else {
+            throw DocumentProcedureError.invalid("Choose the latest method and a current helpful applied result. A blocked version needs later corrective work.")
+        }
+        let value = DocumentProcedure(id: previous.id, revision: previous.revision + 1,
+            title: title.trimmingCharacters(in: .whitespacesAndNewlines),
+            instruction: instruction.trimmingCharacters(in: .whitespacesAndNewlines),
+            mustBeShorter: record.mustBeShorter, preserveNumbersAndLinks: record.preserveNumbersAndLinks,
+            originRecordID: record.id, originFeedbackID: feedback.id, createdAt: Date(), withdrawn: false,
+            supersedes: binding, revisionNote: changeNote.trimmingCharacters(in: .whitespacesAndNewlines))
+        guard value.isValid else {
+            throw DocumentProcedureError.invalid("Use a name of 1–80 characters, instruction of 1–1,200 characters and change note of 1–600 characters.")
+        }
+        guard value.title != previous.title || value.instruction != previous.instruction
+                || value.mustBeShorter != previous.mustBeShorter
+                || value.preserveNumbersAndLinks != previous.preserveNumbersAndLinks else {
+            throw DocumentProcedureError.invalid("Change the method or its requirements before saving a new version.")
+        }
+        guard procedures.count < Self.maximumProcedures else { throw DocumentProcedureError.full }
+        try persist(procedures + [value])
+        return value
     }
 
     /// Nil means eligible for explicit selection, not automatic use or success.
@@ -223,8 +294,7 @@ final class DocumentProcedureLibrary: ObservableObject {
     }
 
     private func persist(_ next: [DocumentProcedure]) throws {
-        guard next.count <= Self.maximumProcedures, next.allSatisfy(\.isValid),
-              Set(next.compactMap { UUID(uuidString: $0.id) }).count == next.count else {
+        guard Self.validHistory(next) else {
             throw DocumentProcedureError.invalid("Invalid procedure library.")
         }
         let encoder = JSONEncoder()
@@ -276,16 +346,36 @@ final class DocumentProcedureLibrary: ObservableObject {
         guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               Set(object.keys) == ["schema", "procedures"],
               let rows = object["procedures"] as? [[String: Any]], rows.count <= maximumProcedures,
-              rows.allSatisfy({ Set($0.keys) == ["id", "revision", "title", "instruction", "mustBeShorter",
-                  "preserveNumbersAndLinks", "originRecordID", "originFeedbackID", "createdAt", "withdrawn"] }) else {
+              rows.allSatisfy({
+                  let required: Set<String> = ["id", "revision", "title", "instruction", "mustBeShorter",
+                      "preserveNumbersAndLinks", "originRecordID", "originFeedbackID", "createdAt", "withdrawn"]
+                  let keys = Set($0.keys)
+                  return required.isSubset(of: keys) && keys.isSubset(of: required.union(["supersedes", "revisionNote"]))
+              }) else {
             throw DocumentProcedureError.unreadable
         }
         let archive = try JSONDecoder().decode(Archive.self, from: data)
-        guard archive.schema == schema, archive.procedures.allSatisfy(\.isValid),
-              Set(archive.procedures.compactMap { UUID(uuidString: $0.id) }).count == archive.procedures.count else {
+        guard [schema, "archi-document-procedures/v1"].contains(archive.schema), Self.validHistory(archive.procedures),
+              archive.schema != "archi-document-procedures/v1" || archive.procedures.allSatisfy({ $0.revision == 1 }) else {
             throw DocumentProcedureError.unreadable
         }
         return archive
+    }
+
+    private static func validHistory(_ values: [DocumentProcedure]) -> Bool {
+        guard values.count <= maximumProcedures, values.allSatisfy(\.isValid) else { return false }
+        let families = Dictionary(grouping: values, by: { UUID(uuidString: $0.id)! })
+        for family in families.values {
+            let ordered = family.sorted { $0.revision < $1.revision }
+            for (index, value) in ordered.enumerated() {
+                guard value.id == ordered[0].id, value.revision == UInt64(index + 1) else { return false }
+                if index > 0 {
+                    guard value.supersedes == ordered[index - 1].binding,
+                          value.createdAt >= ordered[index - 1].createdAt else { return false }
+                }
+            }
+        }
+        return true
     }
 
     private static func readBounded(_ url: URL) throws -> Data? {
