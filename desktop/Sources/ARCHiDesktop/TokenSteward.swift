@@ -272,6 +272,12 @@ final class TokenStewardStore: ObservableObject {
         try recordOutcome(requestID: requestID, kind: .userUseful, value: true, evidenceID: "explicit-user-feedback")
     }
 
+    /// One stable explicit review event. Reversals use a new event ID; retries
+    /// reuse it. This remains user judgment, never a checker result.
+    func recordUserFeedback(requestID: String, evidenceID: String, useful: Bool) throws {
+        try recordOutcome(requestID: requestID, kind: .userUseful, value: useful, evidenceID: evidenceID)
+    }
+
     /// Evidence must come from the caller's independent checker; this function
     /// records its provenance and never grants a capability or evolution state.
     func recordChecked(requestID: String, evidenceID: String, passed: Bool) throws {

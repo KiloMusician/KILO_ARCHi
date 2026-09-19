@@ -24,18 +24,23 @@ struct DocumentWorkHistory: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if let error = store.documentWorkMessage ?? store.documentWork.loadError {
-                Text(error).foregroundStyle(.orange).font(.caption)
+                Text(error).foregroundStyle(.secondary).font(.caption)
                     .accessibilityIdentifier("document.history-error")
             }
             if store.pendingDocumentReceipt != nil {
                 Button("Retry saving document receipt") { store.retryDocumentHistorySave() }
                     .accessibilityIdentifier("document.retry-receipt")
             }
+            if store.documentWork.records.isEmpty {
+                Text("After Apply, review whether the change helped or needs correction. Your judgment can guide kept lessons and learning review.")
+                    .font(.caption2).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("document.feedback-introduction")
+            }
             if !store.documentWork.records.isEmpty {
                 DisclosureGroup("Document work history") {
-                    Text("Keeps up to 64 request and action records on this Mac. Document and reply text are not retained here. History cannot replay an edit.")
+                    Text("Keeps up to 64 request and action records on this Mac. Document and reply text are not retained here. Reviewed records stay until a future explicit history-removal control; the 64-record limit can block new work. History cannot replay an edit.")
                         .font(.caption2).foregroundStyle(.secondary)
-                    ForEach(store.documentWork.records.prefix(8)) { record in
+                    ForEach(store.documentWork.records) { record in
                         VStack(alignment: .leading, spacing: 5) {
                             HStack {
                                 Text(record.state.rawValue.capitalized).font(.caption.weight(.semibold))
@@ -43,6 +48,7 @@ struct DocumentWorkHistory: View {
                                 Text(record.updatedAt, style: .time).font(.caption2).foregroundStyle(.secondary)
                             }
                             Text(record.detail).font(.caption2).foregroundStyle(.secondary)
+                            DocumentFeedbackControls(store: store, record: record)
                             HStack {
                                 Button("Usage") { _ = store.openDocumentUsage(taskID: record.requestID) }
                                 Button("Activity map") { store.open(.nodeLab) }

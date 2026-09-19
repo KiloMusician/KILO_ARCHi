@@ -30,6 +30,150 @@ struct WorkingCopyStoreTests {
         #expect(!rig.store.companionGraphSnapshot().nodes.filter { $0.title == "Document revision" }.isEmpty)
     }
 
+    @Test func appliedFeedbackSurvivesReplyClearingAndReversalCannotReturnThroughEvolutionLoad() async throws {
+        let rig = RevisionStoreRig(); defer { rig.drain() }
+        try await rig.begin()
+        let proposal = try rig.local.complete(replacement: "Revised copy.")
+        try await rig.wait { !rig.store.isWorking }
+        rig.store.applyPassageRevision(provider: .qwen, targetID: proposal.target.id)
+        let row = try #require(rig.store.documentWork.records.first)
+        #expect(rig.store.compareResults.isEmpty)
+        #expect(row.learning?.requestBinding.isValid == true)
+        #expect(row.feedback == nil)
+        #expect(rig.store.evolution.usefulReceipts.isEmpty)
+        #expect(rig.store.reviewDocument(id: row.id, verdict: .helpful))
+        let event = try #require(rig.store.documentWork.records.first?.feedback)
+        #expect(rig.store.reviewDocument(id: row.id, verdict: .helpful))
+        #expect(rig.store.documentWork.records.first?.feedback?.id == event.id)
+        #expect(rig.store.tokenSteward.tasks.first?.outcomes.count == 1)
+        #expect(rig.store.tokenSteward.tasks.first?.userUseful == true)
+        #expect(rig.store.evolution.usefulReceipts.isEmpty, "Feedback alone does not promote learning")
+        #expect(rig.store.addDocumentToLearningReview(id: row.id))
+        #expect(rig.store.addDocumentToLearningReview(id: row.id))
+        #expect(rig.store.evolution.usefulReceipts.count == 1)
+        #expect(rig.store.evolution.save())
+        #expect(rig.store.reviewDocument(id: row.id, verdict: .needsCorrection))
+        #expect(rig.store.tokenSteward.tasks.first?.userUseful == false)
+        #expect(rig.store.evolution.usefulReceipts.isEmpty)
+        #expect(rig.store.evolution.load())
+        #expect(rig.store.evolution.usefulReceipts.isEmpty, "An older saved positive cannot overrule a durable correction")
+        #expect(!rig.store.addDocumentToLearningReview(id: row.id))
+        let reopened = DocumentWorkJournal(url: rig.directory.appendingPathComponent("preferences.document-work.json"))
+        #expect(reopened.records.first?.feedback?.verdict == .needsCorrection)
+        #expect(reopened.records.first?.learning == row.learning)
+        #expect(rig.store.documentFeedbackUsageCurrent(try #require(rig.store.documentWork.records.first)))
+    }
+
+    @Test func correctionRequiresExplicitKeepAndUsedLessonMustStillMatch() async throws {
+        let rig = RevisionStoreRig(); defer { rig.drain() }
+        rig.store.beginLessonCorrection()
+        var draft = try #require(rig.store.lessonDraft)
+        draft.topic = "selected passage"; draft.text = "Use clear language."
+        #expect(rig.store.keepLesson(draft))
+        try await rig.begin()
+        let lesson = try #require(rig.local.request?.localLessons.first)
+        let proposal = try rig.local.complete(replacement: "Revised copy.", memoryIDs: [lesson.modelID])
+        try await rig.wait { !rig.store.isWorking }
+        rig.store.applyPassageRevision(provider: .qwen, targetID: proposal.target.id)
+        let row = try #require(rig.store.documentWork.records.first)
+        #expect(rig.store.reviewDocument(id: row.id, verdict: .helpful))
+        #expect(rig.store.documentReviewLessons(row) == [lesson])
+        #expect(rig.store.addDocumentToLearningReview(id: row.id, lesson: lesson))
+        #expect(rig.store.evolution.usefulReceipts.first?.lessonUse?.matches(snapshot: lesson) == true)
+        #expect(rig.store.withdrawLesson(id: lesson.id, expectedRevision: rig.store.lessonRevision))
+        #expect(rig.store.documentReviewLessons(row).isEmpty)
+        #expect(!rig.store.addDocumentToLearningReview(id: row.id, lesson: lesson))
+        rig.store.beginDocumentCorrection(id: row.id)
+        let correction = try #require(rig.store.lessonDraft)
+        #expect(correction.origin?.requestID == row.requestID)
+        #expect(correction.origin?.inputDigest == row.learning?.requestBinding.inputDigest)
+        #expect(correction.text.isEmpty)
+        #expect(rig.store.keptLessons.isEmpty, "Opening a correction does not invent or keep a lesson")
+        rig.store.lessonDraft?.text = "My unfinished guidance."
+        rig.store.beginDocumentCorrection(id: row.id)
+        #expect(rig.store.lessonDraft?.text == "My unfinished guidance.")
+        #expect(rig.store.lessonDraft?.origin == correction.origin)
+    }
+
+    @Test func interruptedUndoAllowsExistingFeedbackSyncAndWithdrawalOnly() async throws {
+        let rig = RevisionStoreRig(); defer { rig.drain() }
+        try await rig.begin()
+        let proposal = try rig.local.complete(replacement: "Revised copy.")
+        try await rig.wait { !rig.store.isWorking }
+        rig.store.applyPassageRevision(provider: .qwen, targetID: proposal.target.id)
+        var row = try #require(rig.store.documentWork.records.first)
+        #expect(rig.store.reviewDocument(id: row.id, verdict: .helpful))
+        #expect(rig.store.addDocumentToLearningReview(id: row.id))
+        #expect(rig.store.evolution.save())
+        row = try #require(rig.store.documentWork.records.first)
+        row.state = .undoing
+        row.updatedAt = Date()
+        try rig.store.documentWork.save(row)
+        let reopened = CompanionStore(preferenceURL: rig.directory.appendingPathComponent("preferences.json"),
+            assistant: RevisionStoreClient(), tokenSteward: rig.store.tokenSteward)
+        let uncertain = try #require(reopened.documentWork.records.first)
+        #expect(uncertain.state == .failed)
+        #expect(!reopened.canReviewDocument(uncertain))
+        #expect(reopened.canManageDocumentFeedback(uncertain))
+        reopened.syncDocumentFeedback(id: row.id)
+        #expect(reopened.documentFeedbackUsageCurrent(uncertain))
+        #expect(!reopened.reviewDocument(id: row.id, verdict: .helpful))
+        #expect(!reopened.addDocumentToLearningReview(id: row.id))
+        #expect(reopened.evolution.load())
+        reopened.withdrawLearningReview(requestID: try #require(UUID(uuidString: row.requestID)))
+        #expect(reopened.documentWork.records.first?.feedback?.verdict == .withdrawn)
+        #expect(reopened.tokenSteward.tasks.first?.userUseful == false)
+        #expect(reopened.evolution.usefulReceipts.isEmpty)
+        #expect(reopened.evolution.load())
+        #expect(reopened.evolution.usefulReceipts.isEmpty)
+    }
+
+    @Test func unreadableFeedbackHistoryCannotRestoreOldPositiveLearning() async throws {
+        let rig = RevisionStoreRig(); defer { rig.drain() }
+        try await rig.begin()
+        let proposal = try rig.local.complete(replacement: "Revised copy.")
+        try await rig.wait { !rig.store.isWorking }
+        rig.store.applyPassageRevision(provider: .qwen, targetID: proposal.target.id)
+        let row = try #require(rig.store.documentWork.records.first)
+        #expect(rig.store.reviewDocument(id: row.id, verdict: .helpful))
+        #expect(rig.store.addDocumentToLearningReview(id: row.id))
+        #expect(rig.store.evolution.save())
+        #expect(rig.store.reviewDocument(id: row.id, verdict: .withdrawn))
+        let journalURL = rig.directory.appendingPathComponent("preferences.document-work.json")
+        let broken = Data("unreadable fixture".utf8)
+        try broken.write(to: journalURL)
+        let reopened = CompanionStore(preferenceURL: rig.directory.appendingPathComponent("preferences.json"),
+            assistant: RevisionStoreClient(), tokenSteward: TokenStewardStore())
+        #expect(reopened.documentWork.loadError != nil)
+        let appearance = reopened.preferences
+        #expect(!reopened.evolution.load())
+        #expect(reopened.evolution.usefulReceipts.isEmpty)
+        #expect(reopened.preferences == appearance)
+        #expect(try Data(contentsOf: journalURL) == broken)
+    }
+
+    @Test func feedbackRetriesAndWithdrawalRemainDistinctFromMechanicalChecks() async throws {
+        let rig = RevisionStoreRig(); defer { rig.drain() }
+        try await rig.begin()
+        let proposal = try rig.local.complete(replacement: "Revised copy.")
+        try await rig.wait { !rig.store.isWorking }
+        let pending = try #require(rig.store.documentWork.records.first)
+        #expect(!rig.store.reviewDocument(id: pending.id, verdict: .helpful), "A preview is not an applied outcome")
+        rig.store.applyPassageRevision(provider: .qwen, targetID: proposal.target.id)
+        #expect(rig.store.reviewDocument(id: pending.id, verdict: .helpful))
+        let record = try #require(rig.store.documentWork.records.first)
+        rig.store.syncDocumentFeedback(id: record.id)
+        rig.store.syncDocumentFeedback(id: record.id)
+        #expect(rig.store.tokenSteward.tasks.first?.outcomes.count == 1)
+        #expect(rig.store.tokenSteward.tasks.first?.outcomes.first?.kind == .userUseful)
+        rig.store.withdrawLearningReview(requestID: try #require(UUID(uuidString: record.requestID)))
+        #expect(rig.store.documentWork.records.first?.feedback?.verdict == .withdrawn)
+        #expect(rig.store.tokenSteward.tasks.first?.userUseful == false)
+        rig.store.undoWorkingCopyEdit()
+        #expect(rig.store.documentWork.records.first?.state == .undone)
+        #expect(rig.store.documentWork.records.first?.feedback?.verdict == .withdrawn)
+    }
+
     @Test func receiptFailureDisablesUndoUntilExactPendingReceiptCanBeRetried() async throws {
         let rig = RevisionStoreRig(); defer { rig.drain() }
         try await rig.begin()
@@ -242,10 +386,10 @@ private final class RevisionStoreClient: AssistantClient {
         self.request = request; handler = onEvent
         try await withCheckedThrowingContinuation { continuation = $0 }
     }
-    func complete(replacement: String, decision: RevisionDecision = .propose) throws -> PassageRevisionProposal {
+    func complete(replacement: String, decision: RevisionDecision = .propose, memoryIDs: [String] = []) throws -> PassageRevisionProposal {
         let target = try #require(request?.revisionTarget)
         let proposal = PassageRevisionProposal(target: target, decision: decision, replacement: replacement,
-            explanation: "Review the proposed wording.", sourceIDs: ["selected-passage"], memoryIDs: [])
+            explanation: "Review the proposed wording.", sourceIDs: ["selected-passage"], memoryIDs: memoryIDs)
         handler?(.revision(proposal)); resolve()
         return proposal
     }

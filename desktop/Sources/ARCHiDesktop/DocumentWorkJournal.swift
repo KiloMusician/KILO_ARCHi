@@ -41,6 +41,15 @@ struct DocumentWorkRecord: Codable, Equatable, Identifiable, Sendable {
     var checks: [DocumentWorkAuditCheck] = []
     /// Application-authored status only; never an excerpt or model explanation.
     var detail = ""
+    /// Nil on legacy records; never synthesize a binding from a request ID.
+    var learning: DocumentWorkLearningContext? = nil
+    var feedback: DocumentWorkFeedback? = nil
+    /// The current feedback event acknowledged by Usage. Nil remains retryable.
+    var feedbackUsageSyncedID: String? = nil
+
+    var hasPendingFeedbackUsageSync: Bool {
+        feedback.map { feedbackUsageSyncedID != $0.id } ?? false
+    }
 }
 
 enum DocumentWorkJournalError: LocalizedError {
@@ -55,7 +64,7 @@ enum DocumentWorkJournalError: LocalizedError {
         case .invalid(let detail): return "Document work metadata is invalid: \(detail)"
         case .changed: return "Document work records changed outside this session. Reopen to review them before saving."
         case .unreadable: return "The document work journal could not be read. Its existing bytes were preserved."
-        case .full: return "The document work journal has 64 active records. Finish or dismiss a task before starting another."
+        case .full: return "The document work journal is full. Active work and reviewed history are retained; finish or dismiss an unreviewed task before starting another."
         case .locked: return "Another session is saving document work records. Try again after it finishes."
         }
     }
@@ -102,7 +111,7 @@ final class DocumentWorkJournal: ObservableObject {
             try Self.validateUpdate(from: next[index], to: record)
             next[index] = record
         } else {
-            guard record.state != .applied, record.state != .undone else {
+            guard record.state != .applied, record.state != .undone, record.feedback == nil else {
                 throw DocumentWorkJournalError.invalid("A completed mutation requires its earlier pending record.")
             }
             next.append(record)
@@ -110,9 +119,13 @@ final class DocumentWorkJournal: ObservableObject {
         next = Self.sorted(next)
         while next.count > Self.maximumRecords {
             guard let oldestTerminal = next.indices.reversed().first(where: {
-                next[$0].id != record.id && !next[$0].state.isActive
+                next[$0].id != record.id && !next[$0].state.isActive && next[$0].feedback == nil
             }) else { throw DocumentWorkJournalError.full }
             next.remove(at: oldestTerminal)
+        }
+        let feedbackIDs = next.compactMap { $0.feedback?.id.lowercased() }
+        guard Set(feedbackIDs).count == feedbackIDs.count else {
+            throw DocumentWorkJournalError.invalid("Feedback event IDs must belong to one document task.")
         }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
@@ -177,9 +190,37 @@ final class DocumentWorkJournal: ObservableObject {
                 throw DocumentWorkJournalError.invalid("Undo must retain its pending record before success.")
             }
         }
-        if [.applying, .applied, .undoing, .undone].contains(old.state) {
-            guard old.proposedDigest == new.proposedDigest, old.expectedAfterDigest == new.expectedAfterDigest else {
-                throw DocumentWorkJournalError.invalid("The dispatched proposal or expected result changed.")
+        if [.applying, .applied, .undoing, .undone].contains(old.state)
+            || (old.state == .failed && old.expectedAfterDigest != nil) {
+            guard old.proposedDigest == new.proposedDigest, old.expectedAfterDigest == new.expectedAfterDigest,
+                  old.learning == new.learning else {
+                throw DocumentWorkJournalError.invalid("The dispatched proposal, expected result or learning references changed.")
+            }
+        }
+        if old.feedback != nil {
+            guard old.learning == new.learning else {
+                throw DocumentWorkJournalError.invalid("Reviewed work cannot change its learning references.")
+            }
+        }
+        if old.feedback == new.feedback {
+            guard old.feedbackUsageSyncedID == nil || old.feedbackUsageSyncedID == new.feedbackUsageSyncedID else {
+                throw DocumentWorkJournalError.invalid("An acknowledged feedback event cannot become unacknowledged.")
+            }
+        } else {
+            let withdrawingUncertainHistory = old.feedback != nil && new.feedback?.verdict == .withdrawn
+                && old.state == .failed && new.state == .failed
+            guard let feedback = new.feedback, [.applied, .undone].contains(new.state) || withdrawingUncertainHistory,
+                  new.feedbackUsageSyncedID == nil else {
+                throw DocumentWorkJournalError.invalid("Feedback changes require completed work and a new unacknowledged event.")
+            }
+            if let previous = old.feedback {
+                guard previous.revision < UInt64.max, feedback.revision == previous.revision + 1,
+                      feedback.id.lowercased() != previous.id.lowercased(), feedback.verdict != previous.verdict,
+                      feedback.recordedAt >= previous.recordedAt else {
+                    throw DocumentWorkJournalError.invalid("A changed verdict requires the next feedback revision and a new event ID.")
+                }
+            } else if feedback.revision != 1 {
+                throw DocumentWorkJournalError.invalid("The first feedback event must start at revision one.")
             }
         }
     }
@@ -195,8 +236,24 @@ final class DocumentWorkJournal: ObservableObject {
               record.checks.count <= 24, Set(record.checks.map(\.id)).count == record.checks.count,
               record.checks.allSatisfy({ metadata($0.id, limit: 128) && metadata($0.title, limit: 160) }),
               [record.proposedDigest, record.expectedAfterDigest, record.actualAfterDigest].compactMap({ $0 }).allSatisfy(validDigest),
-              record.afterRevision.map({ $0 > record.sourceRevision }) ?? true else {
+              record.afterRevision.map({ $0 > record.sourceRevision }) ?? true,
+              record.learning?.isValid ?? true else {
             throw DocumentWorkJournalError.invalid("Identity, digest, selection, timestamp or field bounds failed.")
+        }
+        if let feedback = record.feedback {
+            // An unchanged judgment remains history through Undo and interrupted
+            // Undo recovery. An uncertain historical judgment can be withdrawn,
+            // but cannot receive a new helpful/correction admission.
+            guard [.applied, .undone, .undoing, .failed].contains(record.state), feedback.isValid,
+                  record.learning != nil, UUID(uuidString: record.requestID) != nil,
+                  record.expectedAfterDigest != nil, record.actualAfterDigest == record.expectedAfterDigest,
+                  record.afterRevision != nil, feedback.recordedAt >= record.createdAt,
+                  feedback.recordedAt <= record.updatedAt,
+                  record.feedbackUsageSyncedID == nil || record.feedbackUsageSyncedID == feedback.id else {
+                throw DocumentWorkJournalError.invalid("Feedback requires retained completed-work evidence and its exact current event.")
+            }
+        } else if record.feedbackUsageSyncedID != nil {
+            throw DocumentWorkJournalError.invalid("A Usage acknowledgment requires its feedback event.")
         }
         if record.state == .applied {
             guard let expected = record.expectedAfterDigest, let actual = record.actualAfterDigest,
@@ -224,13 +281,16 @@ final class DocumentWorkJournal: ObservableObject {
               rows.count <= maximumRecords else { throw DocumentWorkJournalError.unreadable }
         let fields: Set<String> = ["id", "requestID", "provider", "targetID", "sourceDigest", "sourceRevision",
             "selectionStart", "selectionLength", "mustBeShorter", "preserveNumbersAndLinks", "createdAt", "updatedAt",
-            "state", "proposedDigest", "expectedAfterDigest", "actualAfterDigest", "afterRevision", "checks", "detail"]
+            "state", "proposedDigest", "expectedAfterDigest", "actualAfterDigest", "afterRevision", "checks", "detail",
+            "learning", "feedback", "feedbackUsageSyncedID"]
         guard rows.allSatisfy({ row in
             guard Set(row.keys).isSubset(of: fields), let checks = row["checks"] as? [[String: Any]] else { return false }
             return checks.allSatisfy { Set($0.keys) == ["id", "title", "passed"] }
         }) else { throw DocumentWorkJournalError.unreadable }
         let archive = try JSONDecoder().decode(Archive.self, from: data)
-        guard archive.schema == schema, Set(archive.records.map(\.id)).count == archive.records.count else {
+        let feedbackIDs = archive.records.compactMap { $0.feedback?.id.lowercased() }
+        guard archive.schema == schema, Set(archive.records.map(\.id)).count == archive.records.count,
+              Set(feedbackIDs).count == feedbackIDs.count else {
             throw DocumentWorkJournalError.unreadable
         }
         for record in archive.records { try validate(record) }

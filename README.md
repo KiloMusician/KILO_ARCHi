@@ -6,6 +6,12 @@ ARCHi combines a native macOS companion workspace, a Unity companion and practic
 
 The native Swift app owns assistance, private working context, the companion's identity and saved development. Unity presents the accepted native companion state and a separately entered local Arena practice session. KIN, Ball of Light and personal Liminal Seed appearances retain the selected individual's identity. Shared color choices travel through the native-to-Unity appearance contract. A Python/SQLite creator service owns local accounts, published recipe listings and acquired inventory; the app separately owns installed designs and equipment. This source provides no payment, wallet, ownership-transfer, signed-edition or Internet marketplace service. A source license or copied design does not authenticate a creator endorsement.
 
+## Document outcome review
+
+The native working-copy path now retains explicit Helpful, Needs correction and withdrawn judgments after Apply. Usage reconciles the exact event; Add to learning review and Save evolution remain separate choices. A correction opens a user-authored Memory draft and requires Keep. Lesson-use confirmation requires the exact cited version to remain kept. Interrupted Undo permits retry or withdrawal, and unreadable feedback history blocks loading older learning. See [active document work](docs/active-document-work.md).
+
+This bounded feedback bridge passed 21 focused journal/store checks using injected clients and temporary profiles. It does not automatically adjust Q2E state, generalize lessons or certify skills. New native interaction and live-provider acceptance remain separate from these checks. Reviewed metadata stays pinned at the 64-record capacity; explicit history removal remains future work.
+
 ## Current desktop and Arena increment
 
 The desktop Arena entry accepts supported personal Seed colors instead of leaving Liminal/Garnet behind a disabled button. The bundled player validates and acknowledges appearance/color and the exact source art; changing presentation does not grant saved development.

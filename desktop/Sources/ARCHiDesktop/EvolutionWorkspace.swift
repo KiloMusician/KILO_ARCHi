@@ -455,7 +455,7 @@ struct EvolutionWorkspace: View {
                                     }
                                 }
                                 Spacer()
-                                Button("Withdraw") { evolution.withdrawUseful(requestID: receipt.requestID) }.buttonStyle(.borderless)
+                                Button("Withdraw") { store.withdrawLearningReview(requestID: receipt.requestID) }.buttonStyle(.borderless)
                                     .accessibilityLabel("Withdraw request \(receipt.requestID.uuidString.prefix(8))")
                                     .accessibilityIdentifier("evolution-withdraw-work-\(receipt.requestID.uuidString)")
                             }

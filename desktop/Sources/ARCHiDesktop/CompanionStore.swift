@@ -531,6 +531,9 @@ final class CompanionStore: ObservableObject {
         self.evolution = EvolutionStore(origin: initialPreferences?.form ?? .companion,
             saveURL: resolvedPreferenceURL.deletingPathExtension().appendingPathExtension("evolution.json"))
         self.evolution.persistenceBlockedReason = startupRecoveryBlock
+        if documentWork.loadError != nil {
+            self.evolution.historicalEvidenceUnavailableReason = "Document review history could not be read. Restore that file and reopen ARCHi before loading saved learning; your current appearance is unchanged."
+        }
         if let saved = initialPreferences {
             preferences = saved
             rememberPreferences = true
@@ -542,6 +545,12 @@ final class CompanionStore: ObservableObject {
             .store(in: &evolutionSubscriptions)
         self.arcCapabilities.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }
             .store(in: &evolutionSubscriptions)
+        self.documentWork.$records.sink { [weak self] records in
+            self?.evolution.setDocumentFeedbackExclusions(Set(records.compactMap { record in
+                guard let feedback = record.feedback, feedback.verdict != .helpful else { return nil }
+                return UUID(uuidString: record.requestID)
+            }))
+        }.store(in: &evolutionSubscriptions)
         self.documentWork.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }
             .store(in: &evolutionSubscriptions)
         self.arc3.objectWillChange.receive(on: RunLoop.main).sink { [weak self] in
@@ -1066,11 +1075,120 @@ final class CompanionStore: ObservableObject {
         record.proposedDigest = WorkingCopyEditReceipt.digest(proposal.replacement)
         record.expectedAfterDigest = checked.predictedDigest
         record.checks = checked.checks.map { .init(id: $0.id, title: $0.title, passed: $0.passed) }
+        if let receipt = compareResults[provider]?.receipt {
+            record.learning = DocumentWorkLearningContext(requestBinding: EvolutionRequestBinding(receipt: receipt),
+                usedLessons: provider == .qwen ? receipt.localLessons.filter {
+                    receipt.usedLessonIDs.contains($0.modelID)
+                }.compactMap(EvolutionLessonUse.make(snapshot:)) : [])
+        }
         record.state = checked.canApply ? .ready : .blocked
         record.updatedAt = wallClock()
         record.detail = checked.canApply ? "Mechanical checks passed. Review meaning and facts before Apply."
             : "No edit applied. The proposal needs clarification or fails a requested mechanical constraint."
         try documentWork.save(record)
+    }
+
+    func canReviewDocument(_ record: DocumentWorkRecord) -> Bool {
+        !isShuttingDown && documentWork.loadError == nil && [.applied, .undone].contains(record.state)
+            && record.learning?.requestBinding.isValid == true && UUID(uuidString: record.requestID) != nil
+            && record.expectedAfterDigest != nil && record.expectedAfterDigest == record.actualAfterDigest
+            && record.afterRevision != nil && record.checks.allSatisfy(\.passed) && !record.checks.isEmpty
+    }
+
+    func canManageDocumentFeedback(_ record: DocumentWorkRecord) -> Bool {
+        !isShuttingDown && documentWork.loadError == nil && record.feedback != nil
+            && [.applied, .undone, .failed].contains(record.state)
+    }
+
+    @discardableResult
+    func reviewDocument(id: String, verdict: DocumentWorkFeedback.Verdict) -> Bool {
+        guard var record = documentWork.records.first(where: { $0.id == id }),
+              canReviewDocument(record) || (verdict == .withdrawn && canManageDocumentFeedback(record)),
+              pendingDocumentReceipt == nil else { return false }
+        do {
+            if record.feedback?.verdict != verdict {
+                guard (record.feedback?.revision ?? 0) < UInt64.max else { return false }
+                record.feedback = DocumentWorkFeedback(id: UUID().uuidString,
+                    revision: (record.feedback?.revision ?? 0) + 1, verdict: verdict, recordedAt: wallClock())
+                record.feedbackUsageSyncedID = nil
+                record.updatedAt = wallClock()
+                try documentWork.save(record)
+            }
+            syncDocumentFeedback(id: id)
+            return true
+        } catch {
+            documentWorkMessage = "Your review was not saved: \(error.localizedDescription)"
+            return false
+        }
+    }
+
+    func syncDocumentFeedback(id: String) {
+        guard var record = documentWork.records.first(where: { $0.id == id }), canManageDocumentFeedback(record),
+              let feedback = record.feedback else { return }
+        do {
+            // Save the review first, then project only that exact latest event.
+            // Retrying after either write fails uses the same event identifier.
+            try tokenSteward.recordUserFeedback(requestID: record.requestID,
+                evidenceID: "document-review-" + feedback.id, useful: feedback.verdict == .helpful)
+            if record.feedbackUsageSyncedID != feedback.id {
+                record.feedbackUsageSyncedID = feedback.id
+                record.updatedAt = wallClock()
+                try documentWork.save(record)
+            }
+            documentWorkMessage = "Your review is saved on this Mac and reflected in Usage. Learning and kept lessons have separate review controls."
+        } catch {
+            documentWorkMessage = "Your document review is saved; Usage still needs reconciliation: \(error.localizedDescription)"
+        }
+    }
+
+    func documentFeedbackUsageCurrent(_ record: DocumentWorkRecord) -> Bool {
+        guard let feedback = record.feedback, record.feedbackUsageSyncedID == feedback.id,
+              tokenSteward.loadError == nil,
+              let outcome = tokenSteward.tasks.first(where: { $0.id == record.requestID })?.outcomes.last(where: { $0.kind == .userUseful }) else { return false }
+        return outcome.evidenceID == "document-review-" + feedback.id && outcome.value == (feedback.verdict == .helpful)
+    }
+
+    func documentReviewLessons(_ record: DocumentWorkRecord) -> [LessonSnapshot] {
+        guard canReviewDocument(record), record.provider == AssistantProvider.qwen.rawValue else { return [] }
+        return keptLessons.map(LessonSnapshot.init(lesson:)).filter { snapshot in
+            currentKeptLesson(matching: snapshot) != nil
+                && record.learning?.usedLessons.contains(where: { $0.matches(snapshot: snapshot) }) == true
+        }
+    }
+
+    @discardableResult
+    func addDocumentToLearningReview(id: String, lesson: LessonSnapshot? = nil) -> Bool {
+        guard let record = documentWork.records.first(where: { $0.id == id }), canReviewDocument(record),
+              record.feedback?.verdict == .helpful, let learning = record.learning,
+              let requestID = UUID(uuidString: record.requestID),
+              lesson == nil || documentReviewLessons(record).contains(lesson!) else { return false }
+        let admitted = evolution.markDocumentWorkUseful(requestID: requestID, sourceDigest: record.sourceDigest,
+            requestBinding: learning.requestBinding, confirmedLesson: lesson.flatMap(EvolutionLessonUse.make(snapshot:)))
+        documentWorkMessage = admitted ? "Added to this session’s learning review. Use Save evolution to retain it."
+            : "The learning review could not accept this outcome: " + evolution.status
+        return admitted
+    }
+
+    func beginDocumentCorrection(id: String) {
+        guard let record = documentWork.records.first(where: { $0.id == id }), canReviewDocument(record),
+              let binding = record.learning?.requestBinding else { return }
+        guard lessonDraft == nil else {
+            lessonMessage = "Your unfinished lesson is still here. Keep or discard it before starting a new document correction."
+            open(.memory)
+            return
+        }
+        guard reviewDocument(id: id, verdict: .needsCorrection) else { return }
+        lessonDraft = LessonCorrectionDraft(expectedRevision: lessonRevision, prior: nil,
+            origin: LessonOrigin(requestID: record.requestID, inputDigest: binding.inputDigest))
+        lessonMessage = "Write what ARCHi should do differently and when to use it. Nothing becomes a lesson until you Keep it."
+        open(.memory)
+    }
+
+    func withdrawLearningReview(requestID: UUID) {
+        if let document = documentWork.records.first(where: { UUID(uuidString: $0.requestID) == requestID && $0.feedback != nil }) {
+            guard reviewDocument(id: document.id, verdict: .withdrawn) else { return }
+        }
+        evolution.withdrawUseful(requestID: requestID)
     }
 
     private func retireDocumentWork(requestID: String, provider: AssistantProvider, failed: Bool) {

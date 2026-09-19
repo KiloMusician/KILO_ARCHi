@@ -45,3 +45,7 @@ The [Alpha guide](../docs/desktop-alpha-guide.md) defines a short supervised sam
 ### Document work integration
 
 Selected-passage revision now binds explicit requirements at Send, checks proposed edits, and retains metadata for Apply/Undo. See [active document work](../docs/active-document-work.md) for its use, source constraints and Hampton learning priorities.
+
+After Apply, mark the retained result **Helpful** or **Needs correction**, or withdraw an earlier review. Usage reconciles the exact review event. **Add to learning review** and **Save evolution** are separate choices; writing a correction opens Memory and requires explicit **Keep**. Only the exact still-kept lesson version cited by the original local request is eligible for lesson-use confirmation. These choices do not automatically change your Seed or train model weights.
+
+An interrupted Undo still permits syncing or withdrawing an existing review, but cannot add new positive learning. An unreadable review history blocks loading saved learning until repaired. Existing unfinished lesson drafts are preserved. Reviewed records are retained within the 64-record journal limit; a full history can block new work until explicit history management is added.
