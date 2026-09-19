@@ -17,6 +17,7 @@ struct AssistantRequest: Sendable {
     let localProfile: PersonalContextSnapshot?
     let localConversation: [AssistantConversationExchange]
     let localControl: HamptonQ2EDecision?
+    let localReading: DocumentReadingPlan?
     let revisionTarget: RevisionTarget?
     let companion: LocalQiMon.Character?
     var selection: DocumentSelection? = nil
@@ -29,19 +30,22 @@ struct AssistantRequest: Sendable {
          role: EvolutionRole? = nil, helpStyle: EvolutionHelpStyle? = nil,
          localLessons: [LessonSnapshot] = [], revisionTarget: RevisionTarget? = nil,
          companion: LocalQiMon.Character? = nil, localConversation: [AssistantConversationExchange] = [],
-         localProfile: PersonalContextSnapshot? = nil, localControl: HamptonQ2EDecision? = nil) {
+         localProfile: PersonalContextSnapshot? = nil, localControl: HamptonQ2EDecision? = nil,
+         localReading: DocumentReadingPlan? = nil) {
         self.init(prompt: prompt, sourceName: sourceName, sourceText: sourceText,
             sourceRevision: sourceRevision, placementRevision: placementRevision,
             settings: AssistantSettingsSnapshot(tone: tone, replyLength: replyLength, role: role, helpStyle: helpStyle),
             selection: selection, localLessons: localLessons, revisionTarget: revisionTarget, companion: companion,
-            localConversation: localConversation, localProfile: localProfile, localControl: localControl)
+            localConversation: localConversation, localProfile: localProfile, localControl: localControl,
+            localReading: localReading)
     }
 
     init(prompt: String, sourceName: String?, sourceText: String, sourceRevision: UInt64,
          placementRevision: UInt64, settings: AssistantSettingsSnapshot, selection: DocumentSelection? = nil,
          localLessons: [LessonSnapshot] = [], revisionTarget: RevisionTarget? = nil,
          companion: LocalQiMon.Character? = nil, localConversation: [AssistantConversationExchange] = [],
-         localProfile: PersonalContextSnapshot? = nil, localControl: HamptonQ2EDecision? = nil) {
+         localProfile: PersonalContextSnapshot? = nil, localControl: HamptonQ2EDecision? = nil,
+         localReading: DocumentReadingPlan? = nil) {
         self.prompt = prompt
         self.sourceName = sourceName
         self.sourceText = sourceText
@@ -53,6 +57,7 @@ struct AssistantRequest: Sendable {
         self.localProfile = localProfile
         self.localConversation = localConversation
         self.localControl = localControl
+        self.localReading = localReading
         self.revisionTarget = revisionTarget
         self.companion = companion
     }
@@ -65,6 +70,13 @@ struct AssistantRequest: Sendable {
     var hasValidLocalProfile: Bool { localProfile?.isValid ?? true }
     var hasValidLocalConversation: Bool { AssistantConversation.validate(localConversation) }
     var hasValidLocalControl: Bool {
+        if let localReading {
+            guard revisionTarget == nil, sourceName != nil,
+                  localReading.matches(text: sourceText, question: prompt, selection: selection),
+                  let localControl, localControl.isValid, localControl.domain == "document-reading",
+                  localControl.contextID == localReading.sourceDigest, localControl.lane != .stop else { return false }
+            return true
+        }
         guard let localControl else { return true }
         guard let revisionTarget else { return false }
         return localControl.isValid && localControl.domain == "document-revision"
@@ -73,13 +85,16 @@ struct AssistantRequest: Sendable {
 
     var localConversationDigest: String? { AssistantConversation.digest(for: localConversation) }
     var localConversationUTF8Bytes: Int { AssistantConversation.utf8ByteCount(for: localConversation) }
-    var localSourceIDs: [String] { sourceIDs + AssistantConversation.sourceIDs(for: localConversation) }
+    var localSourceIDs: [String] {
+        sourceIDs + (localReading?.sourceIDs ?? []) + AssistantConversation.sourceIDs(for: localConversation)
+    }
 
     func replacingLocalConversation(_ exchanges: [AssistantConversationExchange]) -> AssistantRequest {
         AssistantRequest(prompt: prompt, sourceName: sourceName, sourceText: sourceText,
             sourceRevision: sourceRevision, placementRevision: placementRevision, settings: settings,
             selection: selection, localLessons: localLessons, revisionTarget: revisionTarget,
-            companion: companion, localConversation: exchanges, localProfile: localProfile, localControl: localControl)
+            companion: companion, localConversation: exchanges, localProfile: localProfile, localControl: localControl,
+            localReading: localReading)
     }
 
     /// The common v4 input is unchanged. Local context and the fixed native work
@@ -90,7 +105,24 @@ struct AssistantRequest: Sendable {
         if let localProfile { value["localProfile"] = localProfile.modelInput }
         let workControl = localWorkControl
         if let workControl { value["workControl"] = workControl }
-        if localProfile == nil && localConversation.isEmpty && workControl == nil { return input }
+        if let localReading, hasValidLocalControl {
+            // Keep the full original in the native request for freshness and
+            // external-route disclosure. Only local reading uses these excerpts.
+            value["source"] = .object([
+                "name": .string(sourceName ?? "Shared copy"),
+                "revision": .string(String(sourceRevision)),
+                "fullDocumentSHA256": .string(localReading.sourceDigest),
+                "partial": .bool(localReading.isPartial),
+                "totalSections": .number(Double(localReading.totalSections)),
+                "sections": .array(localReading.sections.map { section in .object([
+                    "id": .string(section.id), "title": .string(section.title),
+                    "text": .string(section.text), "sha256": .string(section.sha256),
+                    "utf16Location": .number(Double(section.location)),
+                    "utf16Length": .number(Double(section.length))
+                ]) })
+            ])
+        }
+        if localProfile == nil && localConversation.isEmpty && workControl == nil && localReading == nil { return input }
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
         return String(decoding: (try? encoder.encode(JSONValue.object(value))) ?? Data(), as: UTF8.self)
     }
@@ -100,6 +132,16 @@ struct AssistantRequest: Sendable {
     private var localWorkControl: JSONValue? {
         guard let localControl, hasValidLocalControl else { return nil }
         let instruction: String
+        if localReading != nil {
+            switch localControl.lane {
+            case .retain: instruction = "Use the supplied source sections, including previously helpful context where available, to answer the current question. Recheck each claim against the current excerpts."
+            case .expand: instruction = "Build the answer from the supplied relevant sections. Identify missing coverage and avoid conclusions about omitted document content."
+            case .repair: instruction = "Reconsider the reading using the supplied wider context. Check for conflicting statements and explain remaining gaps before answering."
+            case .stop: return nil
+            }
+            return .object(["version": .string(localControl.version), "lane": .string(localControl.lane.rawValue),
+                            "instruction": .string(instruction)])
+        }
         switch localControl.lane {
         case .retain:
             instruction = "Follow the user's supplied method and requirements."

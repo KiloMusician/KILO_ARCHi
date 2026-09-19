@@ -105,6 +105,8 @@ final class CompanionStore: ObservableObject {
     private var preparedProcedureSourceDigest: String?
     private var documentProcedureRequests: [String: DocumentProcedureUse] = [:]
     @Published private(set) var documentWorkMessage: String?
+    @Published var documentReadingPreview: DocumentReadingPreview?
+    @Published var documentReadingMessage: String?
     @Published private(set) var showsARC3Reply = false
     @Published private(set) var lastARC3Summary: ARC3SessionSummary?
     @Published private(set) var stewardMessage: String?
@@ -809,7 +811,7 @@ final class CompanionStore: ObservableObject {
     }
 
     var meetingNotesBudgetNotice: String {
-        "This meeting copy and question exceed the local assistant's 22 KB encoded request budget, including instructions and lessons. Go Back and review a shorter excerpt, or shorten your current question. Selecting a passage does not remove the full shared copy. Nothing was sent or replaced."
+        "This question and its selected source sections exceed the local assistant's 22 KB encoded request budget, including instructions and lessons. Review a shorter excerpt or shorten your question. Nothing was sent or replaced."
     }
 
     func canImportMeetingNotes(_ notes: MeetingNotesImport) -> Bool {
@@ -826,9 +828,12 @@ final class CompanionStore: ObservableObject {
         let lessons = keptLessons.filter {
             $0.matches(question: question, sourceName: sourceName, sourceText: sourceText, now: wallClock(), taskScope: .documentQuestion)
         }.map(LessonSnapshot.init(lesson:))
+        let reading = prepareReading(question: question, text: sourceText, selection: nil)
+        guard let reading, reading.control.lane != .stop else { return false }
         let request = AssistantRequest(prompt: question, sourceName: sourceName, sourceText: sourceText,
             sourceRevision: sourceRevision, placementRevision: placementRevision, settings: nextReplySettings,
-            localLessons: lessons, companion: activeQiMon?.character, localProfile: personalContext?.assistantSnapshot)
+            localLessons: lessons, companion: activeQiMon?.character, localProfile: personalContext?.assistantSnapshot,
+            localControl: reading.control, localReading: reading.plan)
         return HamptonReasonsAssistant.fitsMandatoryReasoningInput(request)
     }
 
@@ -1806,8 +1811,15 @@ final class CompanionStore: ObservableObject {
             localProfile: personalContext?.assistantSnapshot)
         let requestTaskScope: HamptonTaskScope = revisionTarget != nil ? .passageRevision
             : request.sourceName != nil ? .documentQuestion : .conversation
-        let capturedControl = revisionTarget != nil && selectedRoute.providers.contains(.qwen)
-            ? documentQ2EDecision : nil
+        let requiresReading = revisionTarget == nil && request.sourceName != nil && !request.sourceText.isEmpty
+            && selectedRoute.providers.contains(.qwen)
+        let reading = requiresReading ? prepareReading(question: question, text: sharedText, selection: textSelection) : nil
+        if requiresReading && reading == nil {
+            status = "The reading context could not fit. Shorten the question or select a smaller passage. Nothing sent."
+            return false
+        }
+        let capturedControl = selectedRoute.providers.contains(.qwen)
+            ? (revisionTarget != nil ? documentQ2EDecision : reading?.control) : nil
         if let control = capturedControl, control.lane == .stop || !control.isValid {
             status = control.reason + " Nothing sent."
             return false
@@ -1860,7 +1872,8 @@ final class CompanionStore: ObservableObject {
                 revisionTarget: request.revisionTarget, companion: request.companion,
                 localConversation: provider == .qwen ? capturedConversation : [],
                 localProfile: provider == .qwen ? request.localProfile : nil,
-                localControl: provider == .qwen ? capturedControl : nil)
+                localControl: provider == .qwen ? capturedControl : nil,
+                localReading: provider == .qwen ? reading?.plan : nil)
             launchLane(provider, request: laneRequest, ticket: ticket, route: selectedRoute,
                        requestID: requestID, inputDigest: digest, pointing: pointing,
                        routingReason: selectedRoute == .native ? "ARCHi-managed local Qwen first; one external fallback only on an eligible failure."
@@ -1897,6 +1910,8 @@ final class CompanionStore: ObservableObject {
                 localInvocations: assistant is HamptonReasonsAssistant ? [] : nil))
         compareResults[provider]?.receipt?.sourceDigest = request.sourceName == nil ? nil
             : SHA256.hash(data: Data(request.sourceText.utf8)).map { String(format: "%02x", $0) }.joined()
+        compareResults[provider]?.receipt?.documentReading = request.localReading
+        compareResults[provider]?.receipt?.readingControl = request.localReading == nil ? nil : request.localControl
         compareResults[provider]?.receipt?.localLessons = request.localLessons
         if provider == .qwen {
             let omissions = lessonOmissions(for: request, now: wallClock())
@@ -1971,6 +1986,13 @@ final class CompanionStore: ObservableObject {
                     try self.beginDocumentWork(requestID: requestID, provider: provider, target: target,
                                                control: request.localControl)
                 }
+                if let reading = request.localReading, let control = request.localControl {
+                    guard provider == .qwen, request.hasValidLocalControl else { throw QwenFailure.invalidResponse }
+                    try self.tokenSteward.recordDocumentReading(requestID: requestID,
+                        trace: DocumentReadingTrace(sourceDigest: reading.sourceDigest,
+                            questionDigest: reading.questionDigest, planDigest: reading.digest,
+                            sectionIDs: reading.sourceIDs, control: control))
+                }
                 try self.tokenSteward.recordDispatch(requestID: requestID, provider: provider)
                 self.compareResults[provider]?.receipt?.requestStarted = true
                 try await assistant.reply(to: request) { [weak self] event in
@@ -2002,6 +2024,19 @@ final class CompanionStore: ObservableObject {
                 }
                 if let proposal = self.compareResults[provider]?.revision {
                     try self.completeDocumentProposal(requestID: requestID, provider: provider, proposal: proposal)
+                }
+                if let reading = request.localReading, provider == .qwen {
+                    // Capture the exact displayed result while this lane still
+                    // owns the request. A citation is membership, not entailment.
+                    guard let proposal = self.hamptonSnapshot.proposal,
+                          let answer = self.compareResults[provider]?.text, !answer.isEmpty else {
+                        throw QwenFailure.invalidResponse
+                    }
+                    let result = DocumentReadingResult(answerDigest: LessonSource.digest(of: answer),
+                        kind: proposal.kind.rawValue,
+                        citedSectionIDs: proposal.sourceIDs.filter { reading.sourceIDs.contains($0) })
+                    try self.tokenSteward.recordDocumentReadingResult(requestID: requestID, result: result)
+                    self.compareResults[provider]?.receipt?.readingResult = result
                 }
                 self.finishOwnership(provider)
                 self.setLane(provider, status: request.revisionTarget == nil ? "Reply ready" : "Revision ready for review", state: .complete)

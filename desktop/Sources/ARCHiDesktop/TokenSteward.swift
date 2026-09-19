@@ -89,6 +89,9 @@ struct TokenStewardTask: Codable, Equatable, Identifiable, Sendable {
     let startedAt: Date
     var lanes: [TokenStewardLane]
     var outcomes: [TokenStewardOutcome] = []
+    /// Optional additions keep legacy tasks readable without inventing reading evidence.
+    var documentReading: DocumentReadingTrace? = nil
+    var documentReadingResult: DocumentReadingResult? = nil
     var isClosed: Bool { !lanes.isEmpty && lanes.allSatisfy { $0.state != "pending" } }
     var delivered: Bool { lanes.contains { $0.state == "complete" } }
     var userUseful: Bool { outcomes.last { $0.kind == .userUseful }?.value == true }
@@ -203,6 +206,78 @@ final class TokenStewardStore: ObservableObject {
         try transaction { state in
             try Self.registerTask(id: requestID, route: route.rawValue,
                 providers: route.providers.map(\.name), date: date, in: &state)
+        }
+    }
+
+    /// Retain the frozen reading decision before Qwen dispatch. Replaying an
+    /// identical retained trace is harmless; a changed trace or first late write
+    /// fails without replacing the existing task's provenance.
+    func recordDocumentReading(requestID: String, trace: DocumentReadingTrace) throws {
+        try transaction { state in
+            guard trace.isValid else { throw TokenStewardError.invalid("document reading trace") }
+            guard let index = state.tasks.firstIndex(where: { $0.id == requestID }) else {
+                throw TokenStewardError.missingTask
+            }
+            let task = state.tasks[index]
+            guard Self.permitsDocumentReading(task),
+                  let lane = task.lanes.first(where: { $0.provider == AssistantProvider.qwen.name }) else {
+                throw TokenStewardError.invalid("document reading route")
+            }
+            if let existing = task.documentReading {
+                guard existing == trace else { throw TokenStewardError.conflict("immutable document reading trace") }
+                return
+            }
+            guard lane.state == "pending", !lane.dispatched else {
+                throw TokenStewardError.conflict("document reading trace after Qwen dispatch")
+            }
+            state.tasks[index].documentReading = trace
+        }
+    }
+
+    /// Bind the returned result while Qwen is dispatched and still pending in
+    /// this journal, before the owning lane receipt makes it terminal.
+    func recordDocumentReadingResult(requestID: String, result: DocumentReadingResult) throws {
+        try transaction { state in
+            guard let index = state.tasks.firstIndex(where: { $0.id == requestID }) else {
+                throw TokenStewardError.missingTask
+            }
+            let task = state.tasks[index]
+            guard Self.permitsDocumentReading(task), let trace = task.documentReading,
+                  result.isValid(for: trace),
+                  let lane = task.lanes.first(where: { $0.provider == AssistantProvider.qwen.name }) else {
+                throw TokenStewardError.invalid("document reading result provenance")
+            }
+            if let existing = task.documentReadingResult {
+                guard existing == result else { throw TokenStewardError.conflict("immutable document reading result") }
+                return
+            }
+            guard lane.state == "pending", lane.dispatched else {
+                throw TokenStewardError.conflict("document reading result outside the pending Qwen dispatch")
+            }
+            state.tasks[index].documentReadingResult = result
+        }
+    }
+
+    /// Explicit review of this retained Qwen answer. Unknown, failed, cloud-only,
+    /// clarification and abstention outcomes never become strategy corrections.
+    /// Repeated verdicts are idempotent; a reversal gets its own evidence event.
+    func recordDocumentReadingFeedback(requestID: String, useful: Bool) throws {
+        let date = now()
+        try transaction { state in
+            guard let index = state.tasks.firstIndex(where: { $0.id == requestID }) else {
+                throw TokenStewardError.missingTask
+            }
+            let task = state.tasks[index]
+            guard Self.permitsDocumentReadingFeedback(task) else {
+                throw TokenStewardError.invalid("document reading feedback without a completed Qwen answer")
+            }
+            if let previous = task.outcomes.last(where: {
+                $0.kind == .userUseful && $0.evidenceID.hasPrefix(DocumentReadingTrace.feedbackEvidencePrefix)
+            }), previous.value == useful { return }
+            state.tasks[index].outcomes.append(TokenStewardOutcome(revision: state.revision + 1,
+                kind: .userUseful, value: useful,
+                evidenceID: DocumentReadingTrace.feedbackEvidencePrefix + UUID().uuidString,
+                recordedAt: date))
         }
     }
 
@@ -410,6 +485,9 @@ final class TokenStewardStore: ObservableObject {
         let date = now()
         try transaction { state in
             try Self.validateID(evidenceID)
+            guard !evidenceID.hasPrefix(DocumentReadingTrace.feedbackEvidencePrefix) else {
+                throw TokenStewardError.invalid("reserved document reading feedback identity")
+            }
             guard let index = state.tasks.firstIndex(where: { $0.id == requestID }) else { throw TokenStewardError.missingTask }
             guard !["arc-evaluation", "arc-interactive"].contains(state.tasks[index].route) else { throw TokenStewardError.invalid("assistance outcome on a synthetic evaluation") }
             if kind == .userUseful && !state.tasks[index].delivered { throw TokenStewardError.invalid("usefulness without a delivered answer") }
@@ -693,6 +771,21 @@ final class TokenStewardStore: ObservableObject {
         }
     }
 
+    private static func permitsDocumentReading(_ task: TokenStewardTask) -> Bool {
+        ["native", "local", "automatic", "compare"].contains(task.route)
+            && task.lanes.contains { $0.provider == AssistantProvider.qwen.name }
+    }
+
+    private static func permitsDocumentReadingFeedback(_ task: TokenStewardTask) -> Bool {
+        guard permitsDocumentReading(task), let trace = task.documentReading,
+              let result = task.documentReadingResult, result.isValid(for: trace), result.kind == "ANSWER" else {
+            return false
+        }
+        return task.lanes.contains {
+            $0.provider == AssistantProvider.qwen.name && $0.dispatched && $0.state == "complete"
+        }
+    }
+
     private static func nativeObservationID(_ task: String, _ provider: String, _ attempt: String) -> String {
         // Length prefixes avoid collisions from user/imported separators.
         [task, provider, attempt].map { "\($0.utf8.count):\($0)" }.joined()
@@ -863,6 +956,17 @@ final class TokenStewardStore: ObservableObject {
             case "api": break
             default: throw TokenStewardError.invalid("task route")
             }
+            if let trace = task.documentReading {
+                guard trace.isValid, permitsDocumentReading(task) else {
+                    throw TokenStewardError.invalid("saved document reading trace or route")
+                }
+            }
+            if let result = task.documentReadingResult {
+                guard let trace = task.documentReading, result.isValid(for: trace),
+                      task.lanes.contains(where: { $0.provider == AssistantProvider.qwen.name && $0.dispatched }) else {
+                    throw TokenStewardError.invalid("saved document reading result provenance")
+                }
+            }
             for lane in task.lanes {
                 try validateID(lane.provider)
                 guard states.contains(lane.state), lane.elapsedMilliseconds.map({ $0 >= 0 }) != false,
@@ -880,6 +984,13 @@ final class TokenStewardStore: ObservableObject {
             var outcomeKeys: Set<String> = []
             for outcome in task.outcomes {
                 try validateID(outcome.evidenceID)
+                if outcome.evidenceID.hasPrefix(DocumentReadingTrace.feedbackEvidencePrefix) {
+                    let eventID = String(outcome.evidenceID.dropFirst(DocumentReadingTrace.feedbackEvidencePrefix.count))
+                    guard UUID(uuidString: eventID) != nil, outcome.kind == .userUseful,
+                          permitsDocumentReadingFeedback(task) else {
+                        throw TokenStewardError.invalid("saved document reading feedback provenance")
+                    }
+                }
                 guard outcome.revision > priorRevision, outcome.revision <= state.revision,
                       outcome.recordedAt.timeIntervalSince1970.isFinite,
                       outcomeKeys.insert(outcome.kind.rawValue + ":" + outcome.evidenceID).inserted,

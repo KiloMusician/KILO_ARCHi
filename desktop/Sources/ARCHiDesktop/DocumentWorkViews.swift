@@ -24,7 +24,8 @@ struct DocumentWorkHistory: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HamptonTaskWorkCard(store: store)
-            HamptonDocumentControlView(store: store)
+            if store.requestsRevision { HamptonDocumentControlView(store: store) }
+            else { DocumentReadingTools(store: store) }
             DocumentProcedureLibraryView(store: store)
             if let error = store.documentWorkMessage ?? store.documentWork.loadError {
                 Text(error).foregroundStyle(.secondary).font(.caption)

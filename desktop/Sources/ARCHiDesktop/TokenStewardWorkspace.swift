@@ -153,6 +153,14 @@ struct TokenStewardWorkspace: View {
                         }
                         Text(task.startedAt.formatted(date: .abbreviated, time: .shortened)).font(.caption)
                         Text(task.id).font(.system(size: 10, design: .monospaced)).textSelection(.enabled)
+                        if let reading = task.documentReading {
+                            Text("Document reading · \(reading.sectionIDs.count) source sections · \(reading.control.lane.title)")
+                                .font(.caption)
+                            if let review = task.outcomes.last(where: { $0.kind == .userUseful && $0.evidenceID.hasPrefix(DocumentReadingTrace.feedbackEvidencePrefix) }) {
+                                Text(review.value ? "Reading marked helpful" : "Reading needs correction")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
                         Text(task.route == "arc-interactive" ? "Local environment session · no model calls · not an assistant answer" : task.route == "arc-evaluation" ? "Offline evaluation · \(task.checkedSuccessful ? "all examples exact" : "not all examples exact or evaluation failed")" : task.userUseful ? "Marked useful" : task.delivered ? "Answer delivered · usefulness not assessed" : "No completed answer")
                             .font(.caption).foregroundStyle(.secondary)
                         if task.route == "arc-interactive", let detail = task.lanes.first?.admission { Text(detail).font(.caption).foregroundStyle(.secondary) }

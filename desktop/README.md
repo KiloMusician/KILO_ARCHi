@@ -65,3 +65,7 @@ Work together now offers Teach this activity. Keep a lesson for Chat, Reading do
 ## Shared Q2E work control
 
 Document revision and ARC3 planning now use one versioned native controller. Existing observations and reviewed outcomes select reuse, an alternative, correction or pause. Work together offers Prepare next step; local Qwen receives the captured approach on Send. ARC3 plans up to eight actions, observes and replans, retaining its decisions and outcomes. See [native Q2E control](../docs/native-q2e-control.md) for coordinates, feedback and bounds.
+
+## Read with context
+
+Open a document or meeting notes in Work together, write a question and choose Find relevant passages. Local Qwen uses a bounded section plan with exact source ranges. The preview identifies omitted coverage. After a completed local answer, Helpful or Needs correction feeds the next reading approach for that source. The same reply controls are available in Chat and the Seed bubble. See [native document reading](../docs/native-document-reading.md).

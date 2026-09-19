@@ -254,6 +254,7 @@ private struct ComparisonReplyLane: View {
                 if provider == .qwen, lane.state == .complete {
                     HamptonReplyReferences(snapshot: store.hamptonSnapshot)
                 }
+                DocumentReadingFeedback(store: store, provider: provider)
                 EvolutionReplyFeedback(store: store, provider: provider)
                 LessonReplyControls(store: store, provider: provider)
                 if let receipt = lane.receipt { AssistantReceiptDetails(receipt: receipt, onOpenGraph: { store.open(.nodeLab) }) }

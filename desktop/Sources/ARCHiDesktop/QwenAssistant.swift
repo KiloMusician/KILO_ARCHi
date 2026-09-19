@@ -83,6 +83,7 @@ final class QwenAssistant: AssistantClient, LocalRoleClient {
         guard !busy else { throw QwenFailure.busy }
         let input = request.localInput
         let system = (request.revisionTarget == nil ? AssistantInstructions.groundedText : AssistantInstructions.passageRevisionText)
+            + (request.localReading == nil ? "" : "\n" + AssistantInstructions.documentReadingText)
             + (request.localLessons.isEmpty ? "" : "\n" + LocalLessonGuidance.text)
             + (request.localConversation.isEmpty ? "" : "\n" + LocalConversationGuidance.text)
         guard !request.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,

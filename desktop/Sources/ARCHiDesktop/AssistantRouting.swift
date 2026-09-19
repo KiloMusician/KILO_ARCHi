@@ -67,6 +67,11 @@ struct AssistantLaneReceipt: Equatable, Sendable {
     var pointing: AssistantPointingSnapshot? = nil
     var routingReason: String? = nil
     var admissionOutcome: HamptonAdmissionOutcome? = nil
+    /// Ephemeral source excerpts for the current answer. The usage journal
+    /// retains only the matching trace/result digests, never these texts.
+    var documentReading: DocumentReadingPlan? = nil
+    var readingControl: HamptonQ2EDecision? = nil
+    var readingResult: DocumentReadingResult? = nil
 }
 
 struct AssistantLaneResult: Equatable, Sendable {

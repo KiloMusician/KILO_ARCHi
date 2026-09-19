@@ -524,6 +524,7 @@ struct WorkTogetherReplyLane: View {
                 Text(result.status).font(.system(size: 11)).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 if result.state == .complete {
+                    DocumentReadingFeedback(store: store, provider: provider)
                     EvolutionReplyFeedback(store: store, provider: provider)
                     LessonReplyControls(store: store, provider: provider)
                 }
