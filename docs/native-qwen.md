@@ -51,7 +51,7 @@ a new paid API integration and does not claim to enforce subscription quotas.
 
 Only app-launched runtime children receive a termination signal. Existing Ollama
 services remain under their original owner's control. Shutdown requests graceful
-termination; it does not force-kill the service. Local ARC commands still execute
+termination; it does not force-kill the service. ARC's optional local Qwen proposer uses this same runtime manager. Local ARC commands still execute
 through their native task services without automatically invoking either model.
 
 This is an initial managed-runtime integration. A bundled inference engine,

@@ -89,7 +89,7 @@ final class ARCCapabilitiesStore: ObservableObject {
 
     init(storageURL: URL? = nil,
          solverExecutor: @escaping @Sendable (ARCSolverInput, ARCSolverConfiguration) async throws -> ARCSolverExecution = ARCSolverExecution.local,
-         qwenProposalClientFactory: @escaping @MainActor (String) -> any ARCQwenProposalClient = { QwenAssistant(model: $0) }) {
+         qwenProposalClientFactory: @escaping @MainActor (String) -> any ARCQwenProposalClient = { QwenAssistant(model: $0, runtime: LocalQwenRuntime.shared) }) {
         self.storageURL = storageURL
         self.solverExecutor = solverExecutor
         self.qwenProposalClientFactory = qwenProposalClientFactory
