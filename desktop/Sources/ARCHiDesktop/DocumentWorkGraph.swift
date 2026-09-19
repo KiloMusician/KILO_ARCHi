@@ -57,6 +57,8 @@ enum DocumentWorkGraph {
                 .init(label: "Your review", value: record.feedback?.verdict.rawValue ?? "Not reviewed"),
                 .init(label: "Review event", value: record.feedback?.id ?? "Not recorded"),
                 .init(label: "Captured lesson versions", value: String(record.learning?.usedLessons.count ?? 0)),
+                .init(label: "Procedure version", value: record.procedureUse.map { "\($0.id) · v\($0.revision) · \($0.digest)" } ?? "No procedure selected"),
+                .init(label: "Procedure counterexample", value: record.procedureUseRejected == true ? "Retained; reuse unavailable" : "Not recorded"),
                 .init(label: "Learning boundary", value: "User judgment is separate from mechanical checks. Kept lessons and Evolution have their own explicit review/save controls."),
                 .init(label: "Status detail", value: record.detail.isEmpty ? "No additional status recorded." : limited(record.detail, to: 800)),
                 .init(label: "Source revision", value: String(record.sourceRevision)),

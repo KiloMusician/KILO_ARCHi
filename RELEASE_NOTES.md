@@ -32,3 +32,7 @@ Build instructions and retention boundaries are in [README](README.md). Private 
 ## Native Qwen integration — 19 September 2026
 
 ARCHi manages startup of an installed local Ollama runtime and selects Qwen first. One eligible Codex fallback retains the original request while excluding local memory; user-selected local-only routing survives restart. Usage records the attempts under one task. The installed desktop connects Qwen automatically; no fresh generation or live cloud fallback was used to qualify this increment. Focused checks cover runtime lifecycle, routing, accounting, cancellation, document ownership and exact-copy permissions. Model weights, installers and new external-provider adapters are not included. This source draft does not change release status.
+
+## Reviewed document procedures — 19 September 2026
+
+Work together now supports explicit user-authored procedure candidates from helpful applied edits, exact version and requirement bindings on later requests, and persistent rejection after correction, withdrawal or Undo. Source reviews and supporting lessons are rechecked before reuse and Apply. Saved & this visit explains the separate local files and current backup exclusions. Native focused checks passed: 10 XCTest and 18 Swift Testing cases; no full suite or live generation. The single installed app exposes Saved procedures in dark mode while preserving selected companion and Unity files. This is a bounded reuse workflow, not model training, automatic skill certification or a new public release.

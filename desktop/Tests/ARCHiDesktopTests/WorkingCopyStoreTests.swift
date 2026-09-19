@@ -5,6 +5,102 @@ import Testing
 
 @MainActor
 struct WorkingCopyStoreTests {
+    @Test func procedureCannotReuseAnExternallyWithdrawnSupportingLesson() async throws {
+        let rig = RevisionStoreRig(); defer { rig.drain() }
+        rig.store.beginLessonCorrection()
+        var draft = try #require(rig.store.lessonDraft)
+        draft.topic = "selected passage"; draft.text = "Use plain words."
+        #expect(rig.store.keepLesson(draft))
+        try await rig.begin()
+        let lesson = try #require(rig.local.request?.localLessons.first)
+        let proposal = try rig.local.complete(replacement: "Clear copy.", memoryIDs: [lesson.modelID])
+        try await rig.wait { !rig.store.isWorking }
+        rig.store.applyPassageRevision(provider: .qwen, targetID: proposal.target.id)
+        let origin = try #require(rig.store.documentWork.records.first)
+        #expect(rig.store.reviewDocument(id: origin.id, verdict: .helpful))
+        #expect(rig.store.keepDocumentProcedure(recordID: origin.id, title: "Plain words", instruction: "Use plain words."))
+        let procedure = try #require(rig.store.documentProcedures.procedures.first)
+        #expect(rig.store.documentProcedureUnavailable(procedure.binding) == nil)
+        let other = CompanionStore(preferenceURL: rig.directory.appendingPathComponent("preferences.json"), assistant: RevisionStoreClient())
+        #expect(other.withdrawLesson(id: lesson.id, expectedRevision: other.lessonRevision))
+        #expect(!rig.store.keptLessons.isEmpty, "The old session still holds cached lesson data")
+        #expect(rig.store.documentProcedureUnavailable(procedure.binding) != nil, "Fresh disk evidence must override cached eligibility")
+        #expect(!rig.store.keepDocumentProcedure(recordID: origin.id, title: "Stale", instruction: "Use plain words."))
+    }
+
+    @Test func procedureReuseCapturesVersionAndCorrectionCannotBeErased() async throws {
+        let rig = RevisionStoreRig(); defer { rig.drain() }
+        try await rig.begin()
+        let first = try rig.local.complete(replacement: "Clear copy.")
+        try await rig.wait { !rig.store.isWorking }
+        rig.store.applyPassageRevision(provider: .qwen, targetID: first.target.id)
+        let origin = try #require(rig.store.documentWork.records.first)
+        #expect(!rig.store.keepDocumentProcedure(recordID: origin.id, title: "Clear prose", instruction: "Use plain language."))
+        #expect(rig.store.reviewDocument(id: origin.id, verdict: .helpful))
+        #expect(rig.store.keepDocumentProcedure(recordID: origin.id, title: "Clear prose", instruction: "Use plain language."))
+        let procedure = try #require(rig.store.documentProcedures.procedures.first)
+        rig.store.share(text: "A different passage.", name: "second.txt")
+        rig.store.selectText(range: NSRange(location: 0, length: rig.store.sharedText.utf16.count), sourceRevision: rig.store.sourceRevision)
+        rig.store.preparePassageRevision()
+        #expect(rig.store.prepareDocumentProcedure(procedure.binding))
+        #expect(!rig.store.isWorking, "Preparing never sends or applies")
+        rig.local.request = nil
+        rig.store.submit()
+        try await rig.wait { rig.local.request != nil }
+        #expect(rig.local.request?.prompt == procedure.instruction)
+        #expect(rig.store.documentWork.records.first?.procedureUse == procedure.binding)
+        let second = try rig.local.complete(replacement: "Different clear passage.")
+        try await rig.wait { !rig.store.isWorking }
+        rig.store.applyPassageRevision(provider: .qwen, targetID: second.target.id)
+        let reused = try #require(rig.store.documentWork.records.first)
+        #expect(reused.state == .applied)
+        #expect(rig.store.reviewDocument(id: reused.id, verdict: .needsCorrection))
+        #expect(rig.store.documentWork.records.first?.procedureUseRejected == true)
+        #expect(rig.store.reviewDocument(id: reused.id, verdict: .helpful))
+        #expect(rig.store.documentProcedureUnavailable(procedure.binding) != nil)
+        let reopened = CompanionStore(preferenceURL: rig.directory.appendingPathComponent("preferences.json"), assistant: RevisionStoreClient())
+        #expect(reopened.documentProcedures.procedures.count == 1)
+        #expect(reopened.documentProcedureUnavailable(procedure.binding) != nil)
+        #expect(reopened.documentWork.records.first?.procedureUse == procedure.binding)
+    }
+
+    @Test func changedProcedureDraftCannotSendAndWithdrawnDependencyCannotApply() async throws {
+        let rig = RevisionStoreRig(); defer { rig.drain() }
+        try await rig.begin()
+        let first = try rig.local.complete(replacement: "Clear copy.")
+        try await rig.wait { !rig.store.isWorking }
+        rig.store.applyPassageRevision(provider: .qwen, targetID: first.target.id)
+        let origin = try #require(rig.store.documentWork.records.first)
+        #expect(rig.store.reviewDocument(id: origin.id, verdict: .helpful))
+        #expect(rig.store.keepDocumentProcedure(recordID: origin.id, title: "Clear prose", instruction: "Use plain language."))
+        let procedure = try #require(rig.store.documentProcedures.procedures.first)
+        rig.store.share(text: "Another copy.", name: "new.txt")
+        rig.store.selectText(range: NSRange(location: 0, length: rig.store.sharedText.utf16.count), sourceRevision: rig.store.sourceRevision)
+        rig.store.preparePassageRevision()
+        #expect(rig.store.prepareDocumentProcedure(procedure.binding))
+        rig.store.requestsRevision = false
+        rig.local.request = nil
+        rig.store.submit()
+        #expect(!rig.store.isWorking, "Ask mode cannot strip a prepared procedure’s admission checks")
+        #expect(rig.local.request == nil)
+        rig.store.requestsRevision = true
+        rig.store.prompt = "A changed instruction."
+        rig.local.request = nil
+        rig.store.submit()
+        #expect(!rig.store.isWorking)
+        #expect(rig.local.request == nil)
+        #expect(rig.store.prepareDocumentProcedure(procedure.binding))
+        rig.store.submit()
+        try await rig.wait { rig.local.request != nil }
+        let second = try rig.local.complete(replacement: "Clearer copy.")
+        try await rig.wait { !rig.store.isWorking }
+        #expect(rig.store.canApplyDocumentRevision(provider: .qwen, proposal: second))
+        #expect(rig.store.reviewDocument(id: origin.id, verdict: .withdrawn))
+        #expect(!rig.store.canApplyDocumentRevision(provider: .qwen, proposal: second))
+        rig.store.applyPassageRevision(provider: .qwen, targetID: second.target.id)
+        #expect(rig.store.sharedText == "Another copy.")
+    }
+
     @Test func applyTargetsExactOccurrenceAndUndoRestoresExactUnicodeBytes() async throws {
         let rig = RevisionStoreRig(); defer { rig.drain() }
         let original = "Café 👩🏽‍💻. Repeat. Repeat. e\u{301}\r\n"

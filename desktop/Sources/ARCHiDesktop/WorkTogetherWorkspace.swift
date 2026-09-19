@@ -463,6 +463,7 @@ struct WorkReplyModePicker: View {
         .accessibilityLabel("Reply mode").accessibilityIdentifier("work.reply-mode")
         .disabled(store.isWorking)
         .help("Ask for an answer, or request a proposed change to the selected passage.")
+        PreparedDocumentProcedureView(store: store)
         if store.requestsRevision {
             Toggle("Require shorter text", isOn: $store.documentRequirements.mustBeShorter)
                 .accessibilityIdentifier("document.require-shorter")

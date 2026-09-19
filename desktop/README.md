@@ -49,3 +49,7 @@ Selected-passage revision now binds explicit requirements at Send, checks propos
 After Apply, mark the retained result **Helpful** or **Needs correction**, or withdraw an earlier review. Usage reconciles the exact review event. **Add to learning review** and **Save evolution** are separate choices; writing a correction opens Memory and requires explicit **Keep**. Only the exact still-kept lesson version cited by the original local request is eligible for lesson-use confirmation. These choices do not automatically change your Seed or train model weights.
 
 An interrupted Undo still permits syncing or withdrawing an existing review, but cannot add new positive learning. An unreadable review history blocks loading saved learning until repaired. Existing unfinished lesson drafts are preserved. Reviewed records are retained within the 64-record journal limit; a full history can block new work until explicit history management is added.
+
+## Reviewed document procedures
+
+After a helpful applied edit, explicitly write and Keep a procedure. Use it for a later selected passage with matching requirements, then review the fresh result. Exact version references and retained counterexamples prevent corrected or withdrawn methods from silently returning. See [operation, retention and limits](../docs/native-document-procedures.md).

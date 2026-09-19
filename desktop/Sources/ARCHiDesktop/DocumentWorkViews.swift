@@ -23,6 +23,7 @@ struct DocumentWorkHistory: View {
     @ObservedObject var store: CompanionStore
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
+            DocumentProcedureLibraryView(store: store)
             if let error = store.documentWorkMessage ?? store.documentWork.loadError {
                 Text(error).foregroundStyle(.secondary).font(.caption)
                     .accessibilityIdentifier("document.history-error")
@@ -38,7 +39,7 @@ struct DocumentWorkHistory: View {
             }
             if !store.documentWork.records.isEmpty {
                 DisclosureGroup("Document work history") {
-                    Text("Keeps up to 64 request and action records on this Mac. Document and reply text are not retained here. Reviewed records stay until a future explicit history-removal control; the 64-record limit can block new work. History cannot replay an edit.")
+                    Text("Keeps up to 64 request and action records on this Mac. Document and reply text are not retained here. Reviewed records and procedure uses stay retained; the 64-record limit can block new work. History cannot replay an edit.")
                         .font(.caption2).foregroundStyle(.secondary)
                     ForEach(store.documentWork.records) { record in
                         VStack(alignment: .leading, spacing: 5) {
@@ -49,6 +50,15 @@ struct DocumentWorkHistory: View {
                             }
                             Text(record.detail).font(.caption2).foregroundStyle(.secondary)
                             DocumentFeedbackControls(store: store, record: record)
+                            if let use = record.procedureUse {
+                                Text("Procedure v\(use.revision) · \(store.documentProcedures.procedure(matching: use)?.title ?? use.id)")
+                                    .font(.caption2).foregroundStyle(.secondary)
+                                if record.procedureUseRejected == true {
+                                    Text("Counterexample retained · this procedure version is unavailable for reuse.")
+                                        .font(.caption2).foregroundStyle(.orange)
+                                }
+                            }
+                            KeepDocumentProcedureView(store: store, record: record)
                             HStack {
                                 Button("Usage") { _ = store.openDocumentUsage(taskID: record.requestID) }
                                 Button("Activity map") { store.open(.nodeLab) }

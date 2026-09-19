@@ -46,6 +46,10 @@ struct DocumentWorkRecord: Codable, Equatable, Identifiable, Sendable {
     var feedback: DocumentWorkFeedback? = nil
     /// The current feedback event acknowledged by Usage. Nil remains retryable.
     var feedbackUsageSyncedID: String? = nil
+    /// Exact reviewed procedure selected at Send. Never inferred from a reply.
+    var procedureUse: DocumentProcedureUse? = nil
+    /// Monotonic counterexample: a later Helpful verdict cannot erase it.
+    var procedureUseRejected: Bool? = nil
 
     var hasPendingFeedbackUsageSync: Bool {
         feedback.map { feedbackUsageSyncedID != $0.id } ?? false
@@ -120,6 +124,7 @@ final class DocumentWorkJournal: ObservableObject {
         while next.count > Self.maximumRecords {
             guard let oldestTerminal = next.indices.reversed().first(where: {
                 next[$0].id != record.id && !next[$0].state.isActive && next[$0].feedback == nil
+                    && next[$0].procedureUse == nil
             }) else { throw DocumentWorkJournalError.full }
             next.remove(at: oldestTerminal)
         }
@@ -147,6 +152,14 @@ final class DocumentWorkJournal: ObservableObject {
         baselineDigest = Self.digest(bytes)
         records = next
         loadError = nil
+    }
+
+    /// Read-only freshness check for consumers of reviewed evidence. Admission
+    /// must not rely on an in-memory Helpful verdict after another writer edits it.
+    var isCurrentOnDisk: Bool {
+        guard !requiresRecovery else { return false }
+        do { return try Self.readBounded(url).map(Self.digest) == baselineDigest }
+        catch { return false }
     }
 
     private static func interruptedProjection(_ original: DocumentWorkRecord) -> DocumentWorkRecord {
@@ -177,6 +190,8 @@ final class DocumentWorkJournal: ObservableObject {
               old.sourceDigest == new.sourceDigest, old.sourceRevision == new.sourceRevision,
               old.selectionStart == new.selectionStart, old.selectionLength == new.selectionLength,
               old.mustBeShorter == new.mustBeShorter, old.preserveNumbersAndLinks == new.preserveNumbersAndLinks,
+              old.procedureUse == new.procedureUse,
+              old.procedureUseRejected != true || new.procedureUseRejected == true,
               old.createdAt == new.createdAt, new.updatedAt >= old.updatedAt else {
             throw DocumentWorkJournalError.invalid("The bound request, target, requirements or time changed.")
         }
@@ -240,6 +255,16 @@ final class DocumentWorkJournal: ObservableObject {
               record.learning?.isValid ?? true else {
             throw DocumentWorkJournalError.invalid("Identity, digest, selection, timestamp or field bounds failed.")
         }
+        guard record.procedureUse?.isValid ?? true,
+              record.procedureUse != nil || record.procedureUseRejected == nil else {
+            throw DocumentWorkJournalError.invalid("Invalid procedure reference or counterexample.")
+        }
+        if record.procedureUse != nil,
+           [.undoing, .undone].contains(record.state) || record.feedback.map({ $0.verdict != .helpful }) == true {
+            guard record.procedureUseRejected == true else {
+                throw DocumentWorkJournalError.invalid("Procedure corrections and Undo must retain their counterexample.")
+            }
+        }
         if let feedback = record.feedback {
             // An unchanged judgment remains history through Undo and interrupted
             // Undo recovery. An uncertain historical judgment can be withdrawn,
@@ -282,7 +307,7 @@ final class DocumentWorkJournal: ObservableObject {
         let fields: Set<String> = ["id", "requestID", "provider", "targetID", "sourceDigest", "sourceRevision",
             "selectionStart", "selectionLength", "mustBeShorter", "preserveNumbersAndLinks", "createdAt", "updatedAt",
             "state", "proposedDigest", "expectedAfterDigest", "actualAfterDigest", "afterRevision", "checks", "detail",
-            "learning", "feedback", "feedbackUsageSyncedID"]
+            "learning", "feedback", "feedbackUsageSyncedID", "procedureUse", "procedureUseRejected"]
         guard rows.allSatisfy({ row in
             guard Set(row.keys).isSubset(of: fields), let checks = row["checks"] as? [[String: Any]] else { return false }
             return checks.allSatisfy { Set($0.keys) == ["id", "title", "passed"] }

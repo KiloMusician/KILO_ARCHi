@@ -99,6 +99,11 @@ final class CompanionStore: ObservableObject {
     let arcCapabilities: ARCCapabilitiesStore
     let arc3: ARC3SessionStore
     let documentWork: DocumentWorkJournal
+    let documentProcedures: DocumentProcedureLibrary
+    @Published private(set) var preparedDocumentProcedure: DocumentProcedureUse?
+    private var preparedProcedureSelection: DocumentSelection?
+    private var preparedProcedureSourceDigest: String?
+    private var documentProcedureRequests: [String: DocumentProcedureUse] = [:]
     @Published private(set) var documentWorkMessage: String?
     @Published private(set) var showsARC3Reply = false
     @Published private(set) var lastARC3Summary: ARC3SessionSummary?
@@ -512,6 +517,7 @@ final class CompanionStore: ObservableObject {
         self.arcCapabilities = arcCapabilities ?? ARCCapabilitiesStore(storageURL: resolvedPreferenceURL.deletingPathExtension().appendingPathExtension("arc.json"))
         self.arc3 = arc3 ?? ARC3SessionStore(outputDirectory: resolvedPreferenceURL.deletingLastPathComponent().appendingPathComponent("ARC3Episodes", isDirectory: true))
         self.documentWork = DocumentWorkJournal(url: resolvedPreferenceURL.deletingPathExtension().appendingPathExtension("document-work.json"))
+        self.documentProcedures = DocumentProcedureLibrary(url: resolvedPreferenceURL.deletingPathExtension().appendingPathExtension("document-procedures.json"))
         // A prepared recovery journal is resolved before either saved owner is
         // admitted. A conflicting interrupted restore leaves both owners closed.
         let startupRecoveryBlock = DesktopRecoveryStartup.recoverIfNeeded(at: resolvedPreferenceURL)
@@ -555,6 +561,8 @@ final class CompanionStore: ObservableObject {
             }))
         }.store(in: &evolutionSubscriptions)
         self.documentWork.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }
+            .store(in: &evolutionSubscriptions)
+        self.documentProcedures.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }
             .store(in: &evolutionSubscriptions)
         self.arc3.objectWillChange.receive(on: RunLoop.main).sink { [weak self] in
             guard let self else { return }
@@ -1025,11 +1033,117 @@ final class CompanionStore: ObservableObject {
         guard let textSelection, textSelection.matches(text: sharedText, sourceRevision: sourceRevision) else {
             status = "Select a passage in the document first."; return
         }
+        clearPreparedDocumentProcedure()
         requestsRevision = true
         documentRequirements.mustBeShorter = shorten
         prompt = shorten ? "Shorten the selected passage while preserving its meaning."
             : "Make the selected passage clearer while preserving its meaning."
         status = "Revision prepared · describe what you want, then Send"
+    }
+
+    func documentProcedureUnavailable(_ use: DocumentProcedureUse) -> String? {
+        if profileRecoveryBlock != nil || !documentWork.isCurrentOnDisk || documentProcedures.loadError != nil {
+            return "Procedure history needs recovery before reuse."
+        }
+        guard let procedure = documentProcedures.procedure(matching: use) else {
+            return "This exact procedure version is unavailable."
+        }
+        if let reason = documentProcedures.availability(of: procedure, records: documentWork.records) { return reason }
+        // Preserve the originating local lesson dependencies through procedure
+        // chaining; withdrawing a lesson cannot smuggle it back through a method.
+        var current: DocumentProcedure? = procedure
+        var visited = Set<DocumentProcedureUse>()
+        while let item = current {
+            guard visited.insert(item.binding).inserted,
+                  let origin = documentWork.records.first(where: { $0.id == item.originRecordID }) else {
+                return "The procedure’s source history is unavailable."
+            }
+            for lesson in origin.learning?.usedLessons ?? [] {
+                guard let disk = try? NativePreferencePersistence.read(preferenceURL), disk.baseline == preferenceBaseline else {
+                    return "Saved lessons changed outside this session. Reopen ARCHi before reusing this procedure."
+                }
+                guard let supporting = keptLessons.first(where: {
+                    let snapshot = LessonSnapshot(lesson: $0)
+                    return lesson.matches(snapshot: snapshot) && currentKeptLesson(matching: snapshot) != nil
+                }) else { return "A lesson supporting this procedure changed or expired." }
+                guard supporting.source == nil || supporting.source == currentLessonSource else {
+                    return "A supporting lesson applies only to its original shared copy."
+                }
+            }
+            current = origin.procedureUse.flatMap { documentProcedures.procedure(matching: $0) }
+        }
+        return nil
+    }
+
+    var canKeepDocumentProcedure: Bool { !isShuttingDown && !isWorking && profileRecoveryBlock == nil }
+
+    @discardableResult
+    func keepDocumentProcedure(recordID: String, title: String, instruction: String) -> Bool {
+        guard canKeepDocumentProcedure, documentWork.isCurrentOnDisk, pendingDocumentReceipt == nil,
+              let record = documentWork.records.first(where: { $0.id == recordID }),
+              canReviewDocument(record), record.state == .applied, record.feedback?.verdict == .helpful,
+              record.procedureUse.map({ documentProcedureUnavailable($0) == nil }) ?? true,
+              (record.learning?.usedLessons ?? []).allSatisfy({ lesson in
+                  keptLessons.map(LessonSnapshot.init(lesson:)).contains {
+                      lesson.matches(snapshot: $0) && currentKeptLesson(matching: $0) != nil
+                  }
+              }) else { return false }
+        if !(record.learning?.usedLessons.isEmpty ?? true) {
+            guard let disk = try? NativePreferencePersistence.read(preferenceURL), disk.baseline == preferenceBaseline else {
+                documentWorkMessage = "Saved lessons changed. Reopen ARCHi before keeping this procedure."
+                return false
+            }
+        }
+        do {
+            _ = try documentProcedures.keep(from: record, title: title, instruction: instruction, records: documentWork.records)
+            documentWorkMessage = "Procedure kept on this Mac. Select it for a matching passage; every result still needs review."
+            return true
+        } catch {
+            documentWorkMessage = "Procedure was not kept: \(error.localizedDescription)"
+            return false
+        }
+    }
+
+    func withdrawDocumentProcedure(_ use: DocumentProcedureUse) {
+        guard !isShuttingDown, profileRecoveryBlock == nil else { return }
+        do {
+            try documentProcedures.withdraw(binding: use)
+            documentWorkMessage = "Procedure withdrawn. Its history is retained; future reuse is disabled."
+        } catch { documentWorkMessage = "Procedure withdrawal was not saved: \(error.localizedDescription)" }
+    }
+
+    func canPrepareDocumentProcedure(_ procedure: DocumentProcedure) -> Bool {
+        !isShuttingDown && !isWorking && requestsRevision && procedure.matches(requirements: documentRequirements)
+            && textSelection?.matches(text: sharedText, sourceRevision: sourceRevision) == true
+            && documentProcedureUnavailable(procedure.binding) == nil
+    }
+
+    @discardableResult
+    func prepareDocumentProcedure(_ use: DocumentProcedureUse) -> Bool {
+        guard let procedure = documentProcedures.procedure(matching: use), canPrepareDocumentProcedure(procedure) else {
+            documentWorkMessage = "Select a passage in Revise mode with the procedure’s requirements before using it."
+            return false
+        }
+        preparedDocumentProcedure = use
+        preparedProcedureSelection = textSelection
+        preparedProcedureSourceDigest = WorkingCopyEditReceipt.digest(sharedText)
+        prompt = procedure.instruction
+        status = "Procedure prepared · review its instruction, then Send"
+        return true
+    }
+
+    func preparedProcedureMatchesCurrentDraft(question: String) -> Bool {
+        guard let use = preparedDocumentProcedure, let procedure = documentProcedures.procedure(matching: use) else { return false }
+        return requestsRevision && question.utf8.elementsEqual(procedure.instruction.utf8)
+            && procedure.matches(requirements: documentRequirements)
+            && textSelection == preparedProcedureSelection
+            && preparedProcedureSourceDigest == WorkingCopyEditReceipt.digest(sharedText)
+    }
+
+    func clearPreparedDocumentProcedure() {
+        preparedDocumentProcedure = nil
+        preparedProcedureSelection = nil
+        preparedProcedureSourceDigest = nil
     }
 
     var canUndoWorkingCopyEdit: Bool {
@@ -1039,8 +1153,13 @@ final class CompanionStore: ObservableObject {
     }
 
     func documentVerification(_ proposal: PassageRevisionProposal) -> DocumentWorkVerification {
-        DocumentWorkCapability.verify(proposal: proposal, text: sharedText,
+        let checked = DocumentWorkCapability.verify(proposal: proposal, text: sharedText,
             sourceRevision: sourceRevision, requirements: proposal.target.requirements)
+        guard let use = documentWork.records.first(where: { $0.targetID == proposal.target.id })?.procedureUse,
+              let reason = documentProcedureUnavailable(use) else { return checked }
+        return DocumentWorkVerification(checks: checked.checks + [
+            .init(id: "procedure", title: reason, passed: false)
+        ], predictedDigest: nil)
     }
 
     func documentRecord(requestID: String, provider: AssistantProvider) -> DocumentWorkRecord? {
@@ -1058,6 +1177,10 @@ final class CompanionStore: ObservableObject {
 
     private func beginDocumentWork(requestID: String, provider: AssistantProvider, target: RevisionTarget) throws {
         try retryDocumentReceipt()
+        let use = documentProcedureRequests[requestID]
+        if let use, let reason = documentProcedureUnavailable(use) {
+            throw DocumentWorkJournalError.invalid(reason)
+        }
         let now = wallClock()
         try documentWork.save(DocumentWorkRecord(id: requestID + "-" + provider.rawValue,
             requestID: requestID, provider: provider.rawValue, targetID: target.id,
@@ -1066,7 +1189,7 @@ final class CompanionStore: ObservableObject {
             mustBeShorter: target.requirements.mustBeShorter,
             preserveNumbersAndLinks: target.requirements.preserveNumbersAndLinks,
             createdAt: now, updatedAt: now, state: .proposing,
-            detail: "Exact working-copy passage captured. No edit applied."))
+            detail: "Exact working-copy passage captured. No edit applied.", procedureUse: use))
         documentWorkMessage = nil
     }
 
@@ -1114,6 +1237,7 @@ final class CompanionStore: ObservableObject {
                 record.feedback = DocumentWorkFeedback(id: UUID().uuidString,
                     revision: (record.feedback?.revision ?? 0) + 1, verdict: verdict, recordedAt: wallClock())
                 record.feedbackUsageSyncedID = nil
+                if record.procedureUse != nil, verdict != .helpful { record.procedureUseRejected = true }
                 record.updatedAt = wallClock()
                 try documentWork.save(record)
             }
@@ -1288,6 +1412,7 @@ final class CompanionStore: ObservableObject {
             workingCopyNotice = "That Undo is unavailable or belongs to an earlier copy."; return
         }
         record.state = .undoing; record.updatedAt = wallClock()
+        if record.procedureUse != nil { record.procedureUseRejected = true }
         record.detail = "Undo requested. Awaiting verification of the original working-copy bytes."
         do { try documentWork.save(record) }
         catch { workingCopyNotice = "Could not prepare an Undo receipt. Nothing changed."; return }
@@ -1557,8 +1682,8 @@ final class CompanionStore: ObservableObject {
 
     private func submit(question: String, pointing: AssistantPointingSnapshot?) -> Bool {
         guard !isShuttingDown else { return false }
-        if pointing == nil, let command = ARC3AssistantCommand.select(question) { return runARC3(command) }
-        if pointing == nil, let selection = ARCActiveAssistant.select(question) {
+        if preparedDocumentProcedure == nil, pointing == nil, let command = ARC3AssistantCommand.select(question) { return runARC3(command) }
+        if preparedDocumentProcedure == nil, pointing == nil, let selection = ARCActiveAssistant.select(question) {
             guard !voiceInput.isActive else {
                 status = "Finish or cancel voice input before starting ARC."; return false
             }
@@ -1597,6 +1722,15 @@ final class CompanionStore: ObservableObject {
             }
             revisionTarget = target
         } else { revisionTarget = nil }
+        let procedureUse: DocumentProcedureUse?
+        if let prepared = preparedDocumentProcedure {
+            guard revisionTarget != nil, preparedProcedureMatchesCurrentDraft(question: question),
+                  documentProcedureUnavailable(prepared) == nil else {
+                status = "This procedure or its draft changed. Choose it again, or Detach procedure before sending. Nothing sent."
+                return false
+            }
+            procedureUse = prepared
+        } else { procedureUse = nil }
         cancelWork(reason: "New request replaces prior work.")
         let selectedRoute = route
         guard selectedRoute.connectsAutomatically || selectedRoute.providers.allSatisfy({ connection(for: $0) == .ready }) else {
@@ -1632,6 +1766,9 @@ final class CompanionStore: ObservableObject {
             return false
         }
         assistantProvider = selectedRoute.primaryProvider
+        // Prior owners were cancelled above. Keep only this request's immutable
+        // binding, also used by its possible external fallback lane.
+        documentProcedureRequests = procedureUse.map { [requestID: $0] } ?? [:]
         compareResults = [:]
         isWorking = true; reply = ""; status = "Sending · \(selectedRoute.title)…"
         if revisionTarget != nil { workingCopyNotice = "Preparing a revision · your working copy is unchanged." }

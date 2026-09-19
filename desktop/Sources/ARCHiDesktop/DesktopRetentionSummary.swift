@@ -48,6 +48,10 @@ struct DesktopRetentionSummary: View {
                         detail: "Send records task IDs, model IDs, usage, timing and outcomes, without messages or document text. Limits and billing facts live in this separate journal. Export it in Token Steward; companion recovery packages do not include it.",
                         destination: .steward, action: "Review usage", id: "steward")
                     Divider()
+                    retentionRow("Document methods & reviews", state: "\(store.documentProcedures.procedures.count) saved procedures",
+                        detail: "Keep procedure saves your authored instruction and review references in a separate local file. Document history retains outcomes and counterexamples, without passage or reply text. These files are not included in companion recovery packages. Select a method explicitly before sending it through your chosen assistant route.",
+                        destination: .context, action: "Review procedures", id: "procedures")
+                    Divider()
                     retentionRow("ARC evidence", state: "\(store.arcCapabilities.records.count) retained evaluations",
                         detail: "Successful imports retain frozen tasks and raw predictions locally for re-scoring. The synthetic demonstration also saves its evidence. These records do not change your companion or enter model context; companion recovery packages do not include them.",
                         destination: .capabilities, action: "Review evidence", id: "capabilities")
