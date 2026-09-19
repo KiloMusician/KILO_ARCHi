@@ -205,6 +205,7 @@ final class CompanionStore: ObservableObject {
     @Published private(set) var localConversationEnabled = true
     @Published private(set) var localConversationNotice = "Recent Qwen exchanges stay in this visit only."
     private var localConversationExpiry: Date?
+    private var localContextTaskScope: HamptonTaskScope?
     @Published private(set) var hamptonSnapshot = HamptonAssistantSnapshot()
     @Published var rememberPreferences = false
     @Published private(set) var keptLessons: [KeptLesson] = []
@@ -461,6 +462,7 @@ final class CompanionStore: ObservableObject {
 
     var nextReplyConversation: [AssistantConversationExchange] {
         localConversationEnabled && route != .codex
+            && (localContextTaskScope == nil || localContextTaskScope == currentTaskScope)
             && (localConversationExpiry.map { $0 > wallClock() } ?? true) ? localConversation.exchanges : []
     }
 
@@ -487,6 +489,7 @@ final class CompanionStore: ObservableObject {
         // native view update. Do not publish a change when nothing changed.
         if !localConversation.exchanges.isEmpty { localConversation.clear() }
         if localConversationExpiry != nil { localConversationExpiry = nil }
+        localContextTaskScope = nil
         let notice = "Recent Qwen exchanges stay in this visit only."
         if localConversationNotice != notice { localConversationNotice = notice }
     }
@@ -821,7 +824,7 @@ final class CompanionStore: ObservableObject {
     private func meetingNotesQuestionFitsLocalBudget(_ question: String, sourceName: String?,
                                                    sourceText: String, sourceRevision: UInt64) -> Bool {
         let lessons = keptLessons.filter {
-            $0.matches(question: question, sourceName: sourceName, sourceText: sourceText, now: wallClock())
+            $0.matches(question: question, sourceName: sourceName, sourceText: sourceText, now: wallClock(), taskScope: .documentQuestion)
         }.map(LessonSnapshot.init(lesson:))
         let request = AssistantRequest(prompt: question, sourceName: sourceName, sourceText: sourceText,
             sourceRevision: sourceRevision, placementRevision: placementRevision, settings: nextReplySettings,
@@ -1066,6 +1069,9 @@ final class CompanionStore: ObservableObject {
                     let snapshot = LessonSnapshot(lesson: $0)
                     return lesson.matches(snapshot: snapshot) && currentKeptLesson(matching: snapshot) != nil
                 }) else { return "A lesson supporting this procedure changed or expired." }
+                guard supporting.taskScope == nil || supporting.taskScope == .passageRevision else {
+                    return "A supporting lesson no longer applies to passage revision."
+                }
                 guard supporting.source == nil || supporting.source == currentLessonSource else {
                     return "A supporting lesson applies only to its original shared copy."
                 }
@@ -1086,6 +1092,7 @@ final class CompanionStore: ObservableObject {
               (record.learning?.usedLessons ?? []).allSatisfy({ lesson in
                   keptLessons.map(LessonSnapshot.init(lesson:)).contains {
                       lesson.matches(snapshot: $0) && currentKeptLesson(matching: $0) != nil
+                          && ($0.taskScope == nil || $0.taskScope == .passageRevision)
                   }
               }) else { return false }
         if !(record.learning?.usedLessons.isEmpty ?? true) {
@@ -1132,6 +1139,7 @@ final class CompanionStore: ObservableObject {
                 keptLessons.contains { kept in
                     let snapshot = LessonSnapshot(lesson: kept)
                     return lesson.matches(snapshot: snapshot) && currentKeptLesson(matching: snapshot) != nil
+                        && (kept.taskScope == nil || kept.taskScope == .passageRevision)
                         && (kept.source == nil || kept.source == currentLessonSource)
                 }
             }
@@ -1785,12 +1793,21 @@ final class CompanionStore: ObservableObject {
             status = "Not sent · assistant not connected"
             return false
         }
-        let ticket = contextTicket()
         if selectedRoute.providers.contains(.qwen) { hamptonSnapshot.proposal = nil }
         let request = AssistantRequest(prompt: question, sourceName: sourceName, sourceText: sharedText,
             sourceRevision: sourceRevision, placementRevision: placementRevision, settings: nextReplySettings,
             selection: textSelection, revisionTarget: revisionTarget, companion: activeQiMon?.character,
             localProfile: personalContext?.assistantSnapshot)
+        let requestTaskScope: HamptonTaskScope = revisionTarget != nil ? .passageRevision
+            : request.sourceName != nil ? .documentQuestion : .conversation
+        if selectedRoute.providers.contains(.qwen) {
+            if let previousScope = localContextTaskScope, previousScope != requestTaskScope {
+                clearSessionContext()
+                localConversationNotice = "Started fresh local context for \(requestTaskScope.title.lowercased()). Kept lessons still follow their chosen scope."
+            }
+            localContextTaskScope = requestTaskScope
+        }
+        let ticket = contextTicket()
         replySourceSelection = textSelection
         // The same immutable current-input contract is dispatched to both lanes.
         // Hampton may add local-only excerpts internally; no answer is forwarded.
@@ -1817,7 +1834,7 @@ final class CompanionStore: ObservableObject {
         compareResults = [:]
         isWorking = true; reply = ""; status = "Sending · \(selectedRoute.title)…"
         if revisionTarget != nil { workingCopyNotice = "Preparing a revision · your working copy is unchanged." }
-        let capturedLessons = matchingLessons(question: request.prompt)
+        let capturedLessons = matchingLessons(question: request.prompt, taskScope: requestTaskScope)
         let capturedConversation = nextReplyConversation
         // Expiry follows indirect use too: a later answer may repeat a lesson
         // without citing it again. Keep the earliest dependency conservatively.
@@ -2735,6 +2752,10 @@ final class CompanionStore: ObservableObject {
 // The existing preference owner is the only durable lesson write boundary.
 // Model clients receive immutable snapshots and have no way to keep a lesson.
 extension CompanionStore {
+    var currentTaskScope: HamptonTaskScope {
+        if requestsRevision { return .passageRevision }
+        return sourceName == nil ? .conversation : .documentQuestion
+    }
     var currentLessonSource: LessonSource? {
         guard let name = sourceName else { return nil }
         return LessonSource(name: name, digest: SHA256.hash(data: Data(sharedText.utf8))
@@ -2745,9 +2766,9 @@ extension CompanionStore {
         route == .codex ? [] : matchingLessons(question: prompt)
     }
 
-    func matchingLessons(question: String) -> [LessonSnapshot] {
+    func matchingLessons(question: String, taskScope: HamptonTaskScope? = nil) -> [LessonSnapshot] {
         keptLessons.filter { $0.matches(question: question, sourceName: sourceName,
-            sourceText: sharedText, now: wallClock()) }.map(LessonSnapshot.init(lesson:))
+            sourceText: sharedText, now: wallClock(), taskScope: taskScope ?? currentTaskScope) }.map(LessonSnapshot.init(lesson:))
     }
 
     func currentKeptLesson(matching snapshot: LessonSnapshot) -> KeptLesson? {
@@ -2762,6 +2783,9 @@ extension CompanionStore {
         if let source = lesson.source, source != currentLessonSource {
             return "Waiting for the same shared copy · \(source.name)"
         }
+        if let scope = lesson.taskScope {
+            return "\(scope.title) · " + (scope == currentTaskScope ? "matches this activity" : "available for that activity")
+        }
         return "Available when your question contains “\(lesson.topic)”"
     }
 
@@ -2771,7 +2795,7 @@ extension CompanionStore {
             guard let prior = keptLessons.first(where: { $0.id == revisingID }) else { return }
             lessonDraft = LessonCorrectionDraft(lessonID: prior.id, expectedRevision: lessonRevision,
                 prior: prior, topic: prior.topic, text: prior.text, reason: prior.reason,
-                source: prior.source, origin: prior.origin, expiresAt: prior.expiresAt)
+                source: prior.source, origin: prior.origin, expiresAt: prior.expiresAt, taskScope: prior.taskScope)
         } else {
             var origin: LessonOrigin?
             if let provider, let result = compareResults[provider], result.state == .complete,
@@ -2809,7 +2833,7 @@ extension CompanionStore {
             text: draft.text.trimmingCharacters(in: .whitespacesAndNewlines),
             reason: draft.reason.trimmingCharacters(in: .whitespacesAndNewlines),
             source: draft.source, origin: draft.origin,
-            createdAt: draft.prior?.createdAt ?? now, updatedAt: now, expiresAt: draft.expiresAt)
+            createdAt: draft.prior?.createdAt ?? now, updatedAt: now, expiresAt: draft.expiresAt, taskScope: draft.taskScope)
         guard lesson.isValid, lesson.expiresAt == nil || lesson.expiresAt! > now else {
             lessonMessage = "Use a topic phrase of 2–80 characters, a lesson of 1–600 characters, an optional reason up to 300 characters, and a future expiry if set."
             return false

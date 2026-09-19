@@ -40,3 +40,7 @@ Work together now supports explicit user-authored procedure candidates from help
 ## Procedure revisions — 19 September 2026
 
 Saved methods now support editing into immutable new versions, explicit change notes and support selection, with prior-version inspection and withdrawal. Existing v1 content bindings remain stable; an explicit save writes the v2 archive. A changed instruction remains a candidate. Current evidence is a normal desktop build/install; no new tests or model-generation calls were run. Earlier test results retain their original source scope. This updates the existing source-only draft, with no merge or release.
+
+## Task memory and method outcomes — 19 September 2026
+
+Kept lessons now support explicit activity scopes, with local conversation/context cleared when activity changes. Work together exposes these scopes and retained revision experience. Available matching methods use a bounded Beta(1,1) feedback ordering; selection and Apply remain explicit. v8 preferences read older formats while preserving existing nil-scope snapshot bindings. Normal compilation and installation completed; the new controls were observed in the installed app. No test suite or model generation was run for this increment. This remains a source-only draft.

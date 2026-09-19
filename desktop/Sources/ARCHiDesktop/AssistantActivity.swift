@@ -86,10 +86,12 @@ struct NextReplySettingsView: View {
             }.buttonStyle(.borderless)
             Text(store.nextCallBudget).foregroundStyle(.secondary)
                 .accessibilityIdentifier("assistant-call-budget")
+            Text("Activity · \(store.currentTaskScope.title)").foregroundStyle(.secondary)
+                .accessibilityIdentifier("assistant-task-scope")
             Button(store.nextReplyLessons.isEmpty ? "Kept lessons · none for this reply" : "Kept lessons · \(store.nextReplyLessons.count) for local Qwen") {
                 store.open(.memory)
             }.buttonStyle(.borderless).accessibilityIdentifier("assistant-next-lessons")
-                .help("Topic phrases: " + store.nextReplyLessons.map(\.topic).joined(separator: ", ")
+                .help("Matched lessons: " + store.nextReplyLessons.map(\.topic).joined(separator: ", ")
                     + ". Kept lessons stay on this Mac and do not add model calls.")
         }
         .font(.system(size: 10))
@@ -156,6 +158,7 @@ struct AssistantReceiptDetails: View {
                             VStack(alignment: .leading, spacing: 3) {
                                 Text("\(lesson.topic) · revision \(lesson.revision)")
                                 Text(lesson.text).textSelection(.enabled)
+                                if let scope = lesson.taskScope { Text("Activity · \(scope.title)") }
                                 Text(receipt.lessonDeliveryDescription(for: lesson))
                                 if let source = lesson.source { Text("Same shared-copy content · \(source.name)") }
                             }
@@ -180,9 +183,10 @@ extension AssistantLaneReceipt {
 
     func lessonDeliveryDescription(for lesson: LessonSnapshot) -> String {
         if usedLessonIDs.contains(lesson.modelID) { return "Cited by Qwen in its accepted reply." }
+        let match = lesson.taskScope == nil ? "topic phrase matched" : "chosen activity matched"
         if localInvocations?.contains(.reasoning) == true {
-            return "Included in the local reasoning attempt because its topic matched; use was not confirmed."
+            return "Included in the local reasoning attempt because its \(match); use was not confirmed."
         }
-        return "Prepared because its topic phrase matched; no local reasoning attempt was recorded."
+        return "Prepared because its \(match); no local reasoning attempt was recorded."
     }
 }

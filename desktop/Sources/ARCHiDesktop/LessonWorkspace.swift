@@ -12,7 +12,7 @@ struct KeptLessonsCard: View {
                 Spacer()
                 Text("\(store.keptLessons.count) / 16").font(.caption).foregroundStyle(.secondary)
             }
-            Text("Teach a useful preference in your own words. Kept lessons survive restart and are used only by Qwen on this Mac, when your question contains the topic phrase. Current instructions take precedence.")
+            Text("Teach a useful preference in your own words. Kept lessons survive restart and are used only by Qwen on this Mac, for your chosen task or a matching topic phrase. Current instructions take precedence.")
                 .font(.system(size: 12)).foregroundStyle(.secondary).lineSpacing(3).padding(.vertical, 8)
             HStack {
                 Button("Keep a lesson…", systemImage: "plus") { store.beginLessonCorrection() }
@@ -29,6 +29,13 @@ struct KeptLessonsCard: View {
                 DisclosureGroup {
                     VStack(alignment: .leading, spacing: 8) {
                         Text(lesson.text).font(.system(size: 13)).textSelection(.enabled)
+                        if let scope = lesson.taskScope {
+                            Text("Use for · \(scope.title). The topic is a label; it need not appear in your question.")
+                                .font(.system(size: 11)).foregroundStyle(.secondary)
+                        } else {
+                            Text("Use when the topic phrase appears in your question.")
+                                .font(.system(size: 11)).foregroundStyle(.secondary)
+                        }
                         if !lesson.reason.isEmpty {
                             Text("Why you kept it · \(lesson.reason)").font(.system(size: 11)).foregroundStyle(.secondary)
                         }
@@ -56,6 +63,8 @@ struct KeptLessonsCard: View {
                 } label: {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(lesson.topic).font(.system(size: 13, weight: .medium))
+                        Text(lesson.taskScope.map { "Use for · \($0.title)" } ?? "Use for · Matching topic phrase")
+                            .font(.system(size: 11)).foregroundStyle(.secondary)
                         Text(store.lessonAvailability(lesson)).font(.system(size: 11)).foregroundStyle(.secondary)
                     }
                 }
@@ -88,15 +97,31 @@ struct LessonCorrectionEditor: View {
                 .font(.system(size: 22, weight: .medium, design: .rounded))
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("Keep a useful preference or correction. This saves your words on this Mac for matching local questions.")
+                    Text("Keep a useful preference or correction. This saves your words on this Mac for local Qwen requests within the scope you choose.")
                         .font(.system(size: 12)).foregroundStyle(.secondary)
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text("Topic phrase").font(.system(size: 12, weight: .medium))
-                        TextField("For example: drawing", text: $draft.topic)
-                            .textFieldStyle(.roundedBorder).accessibilityLabel("Topic phrase").accessibilityIdentifier("lesson-topic")
-                            .focused($focusedField, equals: .topic)
-                        Text("Used when these whole words appear in your question, ignoring case and accents. A topic in the shared document alone will not activate it.")
+                    Picker("Use for", selection: $draft.taskScope) {
+                        Text("Matching topic phrase").tag(HamptonTaskScope?.none)
+                        ForEach(HamptonTaskScope.allCases) { scope in
+                            Text(scope.title).tag(Optional(scope))
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .accessibilityIdentifier("lesson-task-scope")
+                    if let scope = draft.taskScope {
+                        Text("Used for \(scope.title.lowercased()). The topic becomes a label; it does not need to appear in the question. Exact-copy restrictions and expiry still apply.")
                             .font(.system(size: 10)).foregroundStyle(.secondary)
+                    }
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(draft.taskScope == nil ? "Topic phrase" : "Topic label").font(.system(size: 12, weight: .medium))
+                        TextField(draft.taskScope == nil ? "For example: drawing" : "For example: clear, concise writing", text: $draft.topic)
+                            .textFieldStyle(.roundedBorder)
+                            .accessibilityLabel(draft.taskScope == nil ? "Topic phrase" : "Topic label")
+                            .accessibilityIdentifier("lesson-topic")
+                            .focused($focusedField, equals: .topic)
+                        if draft.taskScope == nil {
+                            Text("Used when these whole words appear in your question, ignoring case and accents. A topic in the shared document alone will not activate it.")
+                                .font(.system(size: 10)).foregroundStyle(.secondary)
+                        }
                     }
                     if let prior = draft.prior {
                         Text("Previously · \(prior.text)").font(.system(size: 11)).foregroundStyle(.secondary)

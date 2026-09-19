@@ -224,7 +224,7 @@ struct CompanionChatBubble: View {
                         .buttonStyle(.borderless).font(.system(size: 10))
                         .disabled(store.isShuttingDown)
                         .accessibilityIdentifier("companion-chat.lessons")
-                        .help("Inspect, correct or withdraw lessons in What I remember. Topic phrases: "
+                        .help("Inspect, correct or withdraw lessons in What I remember. Matched lessons: "
                             + store.nextReplyLessons.map(\.topic).joined(separator: ", ")
                             + ". Kept lessons stay on this Mac; opening them makes no model call.")
                     Text(store.nextCallBudget).font(.system(size: 10)).foregroundStyle(.secondary)

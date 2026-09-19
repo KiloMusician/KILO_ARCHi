@@ -23,6 +23,7 @@ struct DocumentWorkHistory: View {
     @ObservedObject var store: CompanionStore
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
+            HamptonTaskWorkCard(store: store)
             DocumentProcedureLibraryView(store: store)
             if let error = store.documentWorkMessage ?? store.documentWork.loadError {
                 Text(error).foregroundStyle(.secondary).font(.caption)

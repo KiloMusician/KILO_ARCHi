@@ -46,10 +46,10 @@ struct DocumentProcedureLibraryView: View {
     var body: some View {
         DisclosureGroup("Saved procedures (\(store.documentProcedures.latestProcedures.count))") {
             VStack(alignment: .leading, spacing: 10) {
-                Text("After a helpful applied edit, keep a method in Document work history. Reuse requires a selected passage and matching requirements. Each use remains a fresh proposal.")
+                Text("Keep a method after helpful applied work. Available methods matching these requirements appear first, ordered by their recorded outcomes. Choose a method explicitly for each new passage.")
                     .foregroundStyle(.secondary)
                 if let error = store.documentProcedures.loadError { Text(error).foregroundStyle(.orange) }
-                ForEach(store.documentProcedures.latestProcedures) { procedure in
+                ForEach(store.orderedDocumentProcedures) { procedure in
                     DocumentProcedureLibraryRow(store: store, procedure: procedure)
                         .id(procedure.binding)
                 }
@@ -203,6 +203,10 @@ private struct DocumentProcedureVersionDetails: View {
         VStack(alignment: .leading, spacing: 5) {
             Text("\(procedure.title) · v\(procedure.revision)").fontWeight(.medium)
             Text(procedure.instruction).textSelection(.enabled)
+            if let outcomes = store.outcomes(for: procedure) {
+                Text("This version · \(outcomes.helpful) helpful · \(outcomes.needsCorrection) corrected or withdrawn · \(outcomes.awaitingReview) awaiting review")
+                    .foregroundStyle(.secondary)
+            }
             Text((procedure.mustBeShorter ? "Shorter text" : "Flexible length") + " · "
                  + (procedure.preserveNumbersAndLinks ? "Exact numbers and links" : "No exact-token requirement"))
                 .foregroundStyle(.secondary)

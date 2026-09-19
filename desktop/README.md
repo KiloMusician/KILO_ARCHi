@@ -57,3 +57,7 @@ After a helpful applied edit, explicitly write and Keep a procedure. Use it for 
 ## Revise a saved method
 
 In Work together, open Saved procedures and choose Edit method. Save a new candidate version with an explicit change note and helpful applied support; earlier versions and request bindings remain in history. A blocked method requires later corrective work. Only the latest version is offered for new preparation. See [document procedures](../docs/native-document-procedures.md) for retention and v1/v2 archive compatibility.
+
+## Teach an activity
+
+Work together now offers Teach this activity. Keep a lesson for Chat, Reading documents, Revising passages, or a matching topic phrase. Source restrictions and expiry still apply. Saved methods are ordered by matching requirements and their own version’s recorded helpful/correction outcomes. See [task memory and outcomes](../docs/native-task-memory-outcomes.md).
