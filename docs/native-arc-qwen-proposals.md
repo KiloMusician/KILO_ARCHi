@@ -1,6 +1,6 @@
-# Local Qwen proposals in ARC Lab
+# Local Qwen proposals in ARC
 
-ARC Lab offers two explicit routes for a loaded puzzle:
+ARC offers two explicit routes for a loaded puzzle:
 
 - **Solve locally** searches the existing finite symbolic catalog.
 - **Ask Qwen for a rule** asks the installed local Qwen model for one short, structured transformation. ARCHi validates and executes that transformation.
@@ -24,3 +24,5 @@ Changing the loaded puzzle, stopping the request, switching the local model or s
 ## Scope
 
 This is a local proposal workflow, not a trained ARC model, official benchmark result or complete Hampton/Q2E implementation. The broader public-corpus baseline was deferred after its strict parser rejected task metadata before any solve ran. That attempt supplies no score. Development in this increment uses focused checks of the new proposal path rather than a complete test-suite or corpus run.
+
+The active assistant dispatch is described in [Active ARC](active-arc-assistant.md). Chat, Work together and the Seed bubble invoke this same capability; the ARC workspace provides management and inspection.

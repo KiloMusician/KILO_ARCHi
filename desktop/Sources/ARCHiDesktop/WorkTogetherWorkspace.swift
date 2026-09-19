@@ -341,7 +341,9 @@ struct WorkTogetherWorkspace: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(12).background(WorkspaceTheme.accent.opacity(0.14), in: RoundedRectangle(cornerRadius: 10))
                     }
-                    if store.compareResults.isEmpty {
+                    if store.activeARCAnswer != nil {
+                        ARCActiveAssistantReply(store: store)
+                    } else if store.compareResults.isEmpty {
                         reviewIntroduction
                     } else {
                         ForEach(store.resultProviders) { provider in
@@ -385,6 +387,7 @@ struct WorkTogetherWorkspace: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 WorkReplyModePicker(store: store)
+                ARCActiveAssistantActions(store: store)
                 Button { showsSettings.toggle() } label: { Image(systemName: "slider.horizontal.3") }
                     .buttonStyle(.borderless)
                     .accessibilityLabel("Next reply settings")
@@ -395,7 +398,7 @@ struct WorkTogetherWorkspace: View {
             }
             HStack(spacing: 5) {
                 AssistantRoutePicker(store: store, compact: true)
-                if !store.isWorking, store.route != .automatic,
+                if !store.isWorking, !store.arcCommandSelected, store.route != .automatic,
                    let provider = store.route.providers.first(where: { store.connection(for: $0) != .ready }) {
                     ProviderConnectionControls(store: store, provider: provider).controlSize(.small)
                 }

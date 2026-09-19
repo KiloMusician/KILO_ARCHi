@@ -357,7 +357,10 @@ private struct AssistantReplyComposer: View {
                     .help(store.nextReplySettings.summary)
                     .popover(isPresented: $showsSettings) { AssistantComposerSettingsView(store: store) }
             }
-            WorkReplyModePicker(store: store).frame(maxWidth: 280)
+            HStack {
+                WorkReplyModePicker(store: store).frame(maxWidth: 280)
+                ARCActiveAssistantActions(store: store)
+            }
             AssistantComposerConnections(store: store)
             TextField(store.requestsRevision ? "How should this passage change?" : "What would you like to work on?",
                       text: $store.prompt, axis: .vertical)
@@ -412,7 +415,9 @@ private struct AssistantReplyContent: View {
                     .buttonStyle(.borderedProminent)
                     .accessibilityIdentifier("assistant.open-revision-review")
             }
-            if store.route == .compare {
+            if store.activeARCAnswer != nil {
+                ARCActiveAssistantReply(store: store)
+            } else if store.route == .compare {
                 ComparisonReplyPanels(store: store)
             } else {
                 Text(store.reply).font(.system(size: 14)).lineSpacing(5)

@@ -85,9 +85,11 @@ struct ARCCapabilitiesWorkspace: View {
 
     private var heading: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("ARC Lab").font(.system(size: 28, weight: .medium, design: .rounded))
-            Text("Explore patterns. Test an idea. Review the evidence.")
+            Text("ARC").font(.system(size: 28, weight: .medium, design: .rounded))
+            Text("ARCHi’s pattern-solving capability. Manage tasks, reasoning, and results.")
                 .foregroundStyle(WorkspaceTheme.muted)
+            Text("Use ARC from Chat or your Seed’s chat bubble. Share an ARC JSON task and ask “solve this ARC puzzle”, or choose ARC task beside your message.")
+                .font(.callout).foregroundStyle(.secondary)
             Label("Local rule search · Optional Qwen proposals", systemImage: "desktopcomputer")
                 .font(.caption).foregroundStyle(WorkspaceTheme.accent)
                 .accessibilityIdentifier("capabilities.local-status")

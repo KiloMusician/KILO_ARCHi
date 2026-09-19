@@ -139,12 +139,18 @@ final class CompanionStore: ObservableObject {
     }
     @Published var position = CGPoint.zero
     @Published var placementRevision: UInt64 = 0
-    @Published var sharedText = ""
+    @Published var sharedText = "" {
+        didSet { if sharedText != oldValue { invalidateActiveARCSource() } }
+    }
     let desktopInterest: DesktopInterestSession
     @Published private(set) var desktopInterestSource: DesktopInterestSource?
     @Published private(set) var desktopInterestExternalDigest: String?
-    @Published var sourceName: String?
-    @Published var sourceRevision: UInt64 = 0
+    @Published var sourceName: String? {
+        didSet { if sourceName != oldValue { invalidateActiveARCSource() } }
+    }
+    @Published var sourceRevision: UInt64 = 0 {
+        didSet { if sourceRevision != oldValue { invalidateActiveARCSource() } }
+    }
     @Published private(set) var textSelection: DocumentSelection?
     @Published private(set) var replySourceSelection: DocumentSelection?
     @Published private(set) var spatialPreview: SpatialPreview?
@@ -169,6 +175,8 @@ final class CompanionStore: ObservableObject {
     private var importedSourceURL: URL?
     @Published var activity: [String] = []
     @Published var isWorking = false
+    @Published private(set) var activeARCAnswer: ARCActiveAssistantAnswer?
+    private var activeARCOwner: ARCActiveAssistantOwnership?
     @Published private(set) var isShuttingDown = false
     @Published var connectionState: AssistantConnectionState = .disconnected
     @Published var connectionMessage = "Connect Qwen on this Mac when you are ready."
@@ -287,7 +295,10 @@ final class CompanionStore: ObservableObject {
     }
 
     var assistantActivity: AssistantActivity {
-        AssistantActivity.derive(owned: Set(replyOwners.keys), results: compareResults)
+        if let answer = activeARCAnswer {
+            return answer.isWorking ? .working : answer.cancelled ? .stopped : answer.error == nil ? .ready : .failed
+        }
+        return AssistantActivity.derive(owned: Set(replyOwners.keys), results: compareResults)
     }
 
     var hasFreshKinFocus: Bool {
@@ -398,6 +409,11 @@ final class CompanionStore: ObservableObject {
     }
 
     var nextCallBudget: String {
+        if let selection = ARCActiveAssistant.select(prompt) {
+            return selection == .command(.propose)
+                ? "At most 1 local Qwen proposal call · no external requests"
+                : "0 model calls · native ARC rules and checker"
+        }
         let local = sessionContextEnabled ? "1 local answer call, plus up to 2 context calls" : "1 local answer call"
         switch route {
         case .local: return local
@@ -407,8 +423,10 @@ final class CompanionStore: ObservableObject {
         }
     }
 
-    var canBeginReply: Bool { !isShuttingDown && !voiceInput.isActive && canShareDesktopInterestWithRoute
-        && (route == .automatic || connectionState == .ready) }
+    var arcCommandSelected: Bool { ARCActiveAssistant.select(prompt) != nil }
+    var isARCWorking: Bool { activeARCOwner != nil }
+    var canBeginReply: Bool { !isShuttingDown && !voiceInput.isActive
+        && (arcCommandSelected || (canShareDesktopInterestWithRoute && (route == .automatic || connectionState == .ready))) }
 
     var canShareDesktopInterestWithRoute: Bool {
         desktopInterestSource == nil || route == .local || route == .automatic
@@ -437,6 +455,7 @@ final class CompanionStore: ObservableObject {
 
     func startNewLocalConversation() {
         guard !isShuttingDown else { return }
+        cancelActiveARC(reason: "New conversation.")
         clearSessionContext()
         localConversationNotice = "New local conversation. Your draft, shared copy and kept lessons are unchanged."
         if assistantProvider == .qwen { reply = "What would you like to work on?" }
@@ -460,7 +479,7 @@ final class CompanionStore: ObservableObject {
          monotonicTime: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
          wallClock: @escaping () -> Date = Date.init, allowsPlay: Bool = true,
          voiceInput: VoiceInputController? = nil, interestReader: (any DesktopInterestReading)? = nil,
-         tokenSteward: TokenStewardStore? = nil) {
+         tokenSteward: TokenStewardStore? = nil, arcCapabilities: ARCCapabilitiesStore? = nil) {
         self.voiceInput = voiceInput ?? VoiceInputController()
         self.desktopInterest = DesktopInterestSession(reader: interestReader)
         self.allowsPlay = allowsPlay
@@ -475,7 +494,7 @@ final class CompanionStore: ObservableObject {
             .appendingPathComponent("ARCHiDesktop/preferences.json")
         self.preferenceURL = resolvedPreferenceURL
         self.tokenSteward = tokenSteward ?? TokenStewardStore(url: resolvedPreferenceURL.deletingPathExtension().appendingPathExtension("steward.json"))
-        self.arcCapabilities = ARCCapabilitiesStore(storageURL: resolvedPreferenceURL.deletingPathExtension().appendingPathExtension("arc.json"))
+        self.arcCapabilities = arcCapabilities ?? ARCCapabilitiesStore(storageURL: resolvedPreferenceURL.deletingPathExtension().appendingPathExtension("arc.json"))
         // A prepared recovery journal is resolved before either saved owner is
         // admitted. A conflicting interrupted restore leaves both owners closed.
         let startupRecoveryBlock = DesktopRecoveryStartup.recoverIfNeeded(at: resolvedPreferenceURL)
@@ -507,7 +526,7 @@ final class CompanionStore: ObservableObject {
             .store(in: &evolutionSubscriptions)
         self.tokenSteward.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }
             .store(in: &evolutionSubscriptions)
-        arcCapabilities.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }
+        self.arcCapabilities.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }
             .store(in: &evolutionSubscriptions)
         reactor.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }
             .store(in: &evolutionSubscriptions)
@@ -516,6 +535,9 @@ final class CompanionStore: ObservableObject {
         desktopInterest.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }
             .store(in: &evolutionSubscriptions)
         $compareResults.combineLatest($isWorking).receive(on: RunLoop.main).sink { [weak self] _ in
+            guard let self else { return }; self.reactor.updateCue(self.assistantActivity)
+        }.store(in: &evolutionSubscriptions)
+        $activeARCAnswer.receive(on: RunLoop.main).sink { [weak self] _ in
             guard let self else { return }; self.reactor.updateCue(self.assistantActivity)
         }.store(in: &evolutionSubscriptions)
         refreshReactorReference()
@@ -662,7 +684,7 @@ final class CompanionStore: ObservableObject {
 
     func chooseDocument() {
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.plainText, .utf8PlainText, .text]
+        panel.allowedContentTypes = [.plainText, .utf8PlainText, .text, .json]
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         panel.message = "Choose a text document to share with ARCHi locally."
@@ -1074,8 +1096,9 @@ final class CompanionStore: ObservableObject {
         stopHarmonyTheme()
         invalidatePlacementPreview(reason: reason)
         let wasWorking = isWorking
-        let hadDerivedReply = !compareResults.isEmpty || hamptonSnapshot.proposal != nil
+        let hadDerivedReply = !compareResults.isEmpty || hamptonSnapshot.proposal != nil || activeARCAnswer != nil
         workGeneration &+= 1
+        cancelActiveARC(reason: reason, keepAnswer: reason == "Stopped.")
         for provider in Array(replyOwners.keys) { cancelLane(provider, reason: reason) }
         // Completed lanes are also bound to the superseded request ticket.
         for provider in Array(compareResults.keys) {
@@ -1098,8 +1121,140 @@ final class CompanionStore: ObservableObject {
 
     func submit() { _ = submit(question: prompt, pointing: nil) }
 
+    /// Native assistant dispatch. This reuses the profile's existing ARC owner,
+    /// evaluator, evidence shelf and Usage path; no model lane is synthesized.
+    @discardableResult
+    func runARC(_ command: ARCActiveAssistantCommand) -> Bool {
+        guard !isShuttingDown, !voiceInput.isActive else { return false }
+        cancelWork(reason: "New ARC request replaces prior work.")
+        compareResults = [:]
+        replySourceSelection = nil
+        hamptonSnapshot.proposal = nil
+        // Explicit assistant dispatch also replaces work started in the ARC view.
+        arcCapabilities.stopSolving()
+        do {
+            if let name = sourceName {
+                try arcCapabilities.loadSolverTask(data: Data(sharedText.utf8), name: name)
+            }
+            guard let document = arcCapabilities.solverDocument else {
+                showActiveARCError(command: command,
+                    message: "Share standard ARC train/test JSON in the working copy, or load a task in ARC, then try again.")
+                return false
+            }
+            let owner = ARCActiveAssistantOwnership(command: command, ticket: contextTicket(), document: document)
+            activeARCOwner = owner
+            let message = command == .solve ? "Solving this ARC task with native rules…"
+                : "Asking local Qwen for one bounded ARC rule, then checking it…"
+            activeARCAnswer = ARCActiveAssistantAnswer(command: command, taskID: nil, evidenceID: nil,
+                inputName: document.name, inputDigest: document.inputDigest, status: message,
+                result: nil, summary: nil, error: nil, isWorking: true)
+            isWorking = true
+            reply = message
+            status = message
+            let receive: @MainActor (ARCCapabilitiesEvent) -> Void = { [weak self, owner] event in
+                owner.lastEvent = event
+                guard let self else { return }
+                // Accounting belongs to the actual attempt even after the reply
+                // owner is retired. Cancellation never manufactures zero usage.
+                self.recordARCEvaluation(event)
+                self.receiveActiveARC(event, owner: owner)
+            }
+            switch command {
+            case .solve: arcCapabilities.startSolving(onEvaluation: receive)
+            case .propose: arcCapabilities.startQwenProposal(model: qwenModel, onEvaluation: receive)
+            }
+            // Recovery/preflight failures can reject before an ARC owner exists.
+            if activeARCOwner?.id == owner.id, !arcCapabilities.isSolving, !arcCapabilities.isProposing {
+                activeARCOwner = nil
+                showActiveARCError(command: command, message: command == .solve
+                    ? arcCapabilities.solverStatus : arcCapabilities.qwenProposalStatus)
+                return false
+            }
+            return true
+        } catch {
+            showActiveARCError(command: command,
+                message: "The shared working copy is not a valid ARC task. \(error.localizedDescription) Use standard train/test JSON, or stop sharing to use the loaded ARC task.")
+            return false
+        }
+    }
+
+    private func receiveActiveARC(_ event: ARCCapabilitiesEvent, owner: ARCActiveAssistantOwnership) {
+        guard activeARCOwner?.id == owner.id else { return }
+        guard !isShuttingDown, isCurrent(owner.ticket, requireVisible: false) else {
+            cancelActiveARC(reason: "The ARC request context changed.")
+            return
+        }
+        if event.proposalInProgress {
+            let message = event.proposalInference?.attempted == true
+                ? "Local Qwen is proposing one rule. ARC will independently check it."
+                : "Connecting to Qwen on this Mac for this ARC task…"
+            activeARCAnswer = ARCActiveAssistantAnswer(command: owner.command, taskID: event.taskID, evidenceID: nil,
+                inputName: owner.document.name, inputDigest: owner.document.inputDigest, status: message,
+                result: nil, summary: nil, error: nil, isWorking: true)
+            reply = message; status = message
+            return
+        }
+        let result: ARCActiveAssistantResult?
+        if owner.command == .solve, let review = arcCapabilities.solverReview, review.taskID == event.taskID {
+            result = .symbolic(review.run)
+        } else if owner.command == .propose, let review = arcCapabilities.qwenProposalReview,
+                  review.taskID == event.taskID, let proposed = review.result {
+            result = .proposal(proposed)
+        } else { result = nil }
+        let summary = event.evidenceID.flatMap { id in arcCapabilities.records.first(where: { $0.id == id })?.summary }
+        let message = event.error ?? result?.description ?? "ARC finished without an admitted prediction."
+        activeARCOwner = nil
+        let answer = ARCActiveAssistantAnswer(command: owner.command, taskID: event.taskID, evidenceID: event.evidenceID,
+            inputName: owner.document.name, inputDigest: owner.document.inputDigest, status: message,
+            result: result, summary: summary, error: event.error, isWorking: false, cancelled: event.cancelled)
+        activeARCAnswer = answer
+        isWorking = !replyOwners.isEmpty
+        reply = answer.replyText
+        status = message
+    }
+
+    private func showActiveARCError(command: ARCActiveAssistantCommand, message: String) {
+        activeARCAnswer = ARCActiveAssistantAnswer(command: command, taskID: nil, evidenceID: nil,
+            inputName: sourceName, inputDigest: nil, status: "ARC needs your attention",
+            result: nil, summary: nil, error: message, isWorking: false)
+        isWorking = !replyOwners.isEmpty
+        reply = message
+        status = "ARC needs your attention"
+    }
+
+    private func cancelActiveARC(reason: String, keepAnswer: Bool = false) {
+        let owner = activeARCOwner
+        // Retire before the store synchronously reports cancellation.
+        activeARCOwner = nil
+        if owner != nil { arcCapabilities.stopSolving() }
+        if keepAnswer, let owner {
+            activeARCAnswer = ARCActiveAssistantAnswer(command: owner.command, taskID: owner.lastEvent?.taskID,
+                evidenceID: nil, inputName: owner.document.name, inputDigest: owner.document.inputDigest,
+                status: reason, result: nil, summary: nil, error: reason, isWorking: false, cancelled: true)
+        } else { activeARCAnswer = nil }
+        isWorking = !replyOwners.isEmpty
+    }
+
+    private func invalidateActiveARCSource() {
+        guard activeARCOwner != nil || activeARCAnswer != nil else { return }
+        cancelWork(reason: "Shared source changed. The earlier ARC answer was cleared.")
+    }
+
     private func submit(question: String, pointing: AssistantPointingSnapshot?) -> Bool {
         guard !isShuttingDown else { return false }
+        if pointing == nil, let selection = ARCActiveAssistant.select(question) {
+            guard !voiceInput.isActive else {
+                status = "Finish or cancel voice input before starting ARC."; return false
+            }
+            switch selection {
+            case .command(let command): return runARC(command)
+            case .invalid:
+                cancelWork(reason: "New ARC request replaces prior work.")
+                compareResults = [:]
+                showActiveARCError(command: .solve, message: ARCActiveAssistant.commandHelp)
+                return false
+            }
+        }
         guard canShareDesktopInterestWithRoute else {
             status = "This window snapshot stays local. Allow this exact copy for your external route, or choose Local Qwen. Nothing sent."
             return false
@@ -1410,6 +1565,7 @@ final class CompanionStore: ObservableObject {
 
     func selectQwenModel(_ model: String) {
         guard !isShuttingDown, QwenAssistant.supportedModels.contains(model), model != qwenModel else { return }
+        cancelActiveARC(reason: "Local Qwen model changed.")
         arcCapabilities.stopQwenProposal(reason: "Local Qwen model changed.")
         qwenModel = model
         replaceLocalAssistant()
@@ -1417,6 +1573,7 @@ final class CompanionStore: ObservableObject {
 
     func selectQwenContextModel(_ model: String) {
         guard !isShuttingDown, QwenAssistant.supportedModels.contains(model), model != qwenContextModel else { return }
+        cancelActiveARC(reason: "Local context model changed.")
         qwenContextModel = model
         replaceLocalAssistant()
     }
@@ -1571,6 +1728,7 @@ final class CompanionStore: ObservableObject {
     }
 
     private func cancelLocalWork(reason: String) {
+        cancelActiveARC(reason: reason)
         let hadLocalWork = replyOwners[.qwen] != nil
         cancelLane(.qwen, reason: reason)
         if hadLocalWork && !isWorking && route == .local { workGeneration &+= 1 }

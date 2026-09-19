@@ -243,7 +243,10 @@ struct CompanionChatBubble: View {
             }
             .frame(minHeight: 65, maxHeight: .infinity)
             Divider()
-            AssistantComposerConnections(store: store)
+            HStack {
+                AssistantComposerConnections(store: store)
+                ARCActiveAssistantActions(store: store)
+            }
             TextField("Ask a question or describe a task…", text: $store.prompt, axis: .vertical)
                 .font(.system(size: 13)).textFieldStyle(.plain).lineLimit(2...3)
                 .focused($composerFocused)
@@ -268,8 +271,7 @@ struct CompanionChatBubble: View {
                 } else {
                     Button("Send", systemImage: "arrow.up") { store.submit() }
                         .buttonStyle(.borderedProminent)
-                        .disabled(!store.canBeginReply || store.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                            || (store.requestsRevision && store.textSelection == nil))
+                        .disabled(!AssistantComposerState(store: store).canSend)
                         .keyboardShortcut(.return, modifiers: .command)
                         .accessibilityIdentifier("companion-chat.send")
                 }
@@ -301,7 +303,9 @@ struct CompanionChatBubble: View {
     }
 
     @ViewBuilder private var replies: some View {
-        if store.route == .compare {
+        if store.activeARCAnswer != nil {
+            ARCActiveAssistantReply(store: store)
+        } else if store.route == .compare {
             ComparisonReplyPanels(store: store, compact: true)
         } else if let result = store.compareResults[store.assistantProvider] {
             VStack(alignment: .leading, spacing: 8) {

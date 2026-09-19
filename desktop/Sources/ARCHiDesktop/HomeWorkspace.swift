@@ -121,13 +121,13 @@ struct HomeWorkspace: View {
             Image(systemName: "square.grid.3x3")
                 .font(.system(size: 24, weight: .light)).foregroundStyle(WorkspaceTheme.accent)
             VStack(alignment: .leading, spacing: 5) {
-                Text("Explore patterns with ARCHi").font(.system(size: 14, weight: .medium))
-                Text("Try a puzzle in ARC Lab. Solve locally, then follow the result into Usage and your Activity map.")
+                Text("ARC works with ARCHi").font(.system(size: 14, weight: .medium))
+                Text("Solve an ARC task from Chat. Manage the task here and follow its checked result into Usage and your Activity map.")
                     .font(.system(size: 12)).foregroundStyle(WorkspaceTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
-            Button("Open ARC Lab", systemImage: "arrow.right") { store.open(.capabilities) }
+            Button("Manage ARC", systemImage: "arrow.right") { store.open(.capabilities) }
                 .buttonStyle(WorkspaceActionStyle())
                 .accessibilityIdentifier("home.arc-lab")
         }.padding(18).modifier(WorkspaceSurface())

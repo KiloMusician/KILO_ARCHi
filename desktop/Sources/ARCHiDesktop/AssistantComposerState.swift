@@ -15,7 +15,7 @@ struct AssistantComposerState {
             blockedReason = "Finish or cancel dictation before sending."
         } else if store.isWorking {
             blockedReason = "Stop the current reply before sending another."
-        } else if store.requestsRevision && store.textSelection == nil {
+        } else if !store.arcCommandSelected && store.requestsRevision && store.textSelection == nil {
             blockedReason = "Select the passage to revise."
         } else if !store.canBeginReply {
             blockedReason = store.route == .compare
@@ -26,7 +26,9 @@ struct AssistantComposerState {
             blockedReason = nil
         }
 
-        if let blockedReason, !store.isWorking {
+        if store.arcCommandSelected || store.isARCWorking {
+            sendDisclosure = "ARC runs on this Mac. It uses the shared ARC JSON or your loaded task; results are independently checked."
+        } else if let blockedReason, !store.isWorking {
             sendDisclosure = blockedReason
         } else {
             let selection = store.isWorking ? store.replySourceSelection : store.textSelection

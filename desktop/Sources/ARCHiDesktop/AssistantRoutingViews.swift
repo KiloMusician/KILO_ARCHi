@@ -18,7 +18,10 @@ struct AssistantRouteSelector: View {
     }
 
     private var disclosure: String {
-        switch store.route {
+        if store.arcCommandSelected || store.isARCWorking {
+            return "ARC uses its native local task capability. Only an explicit Qwen proposal invokes the local model."
+        }
+        return switch store.route {
         case .local:
             store.sessionContextEnabled
                 ? "Send runs on this Mac with optional local session excerpts."
@@ -97,7 +100,7 @@ struct AssistantComposerConnections: View {
                 Button("Usage & limits") { store.open(.steward) }.buttonStyle(.borderless)
             }.accessibilityIdentifier("assistant.accounting-warning")
         }
-        if !store.isWorking && store.route != .automatic {
+        if !store.isWorking && !store.arcCommandSelected && store.route != .automatic {
             ForEach(store.route.providers.filter { store.connection(for: $0) != .ready }) { provider in
                 HStack(alignment: .center, spacing: 8) {
                     ProviderConnectionControls(store: store, provider: provider)
