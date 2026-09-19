@@ -22,6 +22,8 @@ struct AssistantRouteSelector: View {
             return "ARC uses its native local task capability. Only an explicit Qwen proposal invokes the local model."
         }
         return switch store.route {
+        case .native:
+            store.route.disclosure
         case .local:
             store.sessionContextEnabled
                 ? "Send runs on this Mac with optional local session excerpts."
@@ -51,6 +53,7 @@ struct AssistantRoutePicker: View {
                 Text("Answer with").font(.system(size: compact ? 11 : 12, weight: .medium))
             }
             Picker("Answer with", selection: Binding(get: { store.route }, set: { store.setAssistantRoute($0) })) {
+                Text(AssistantRoute.native.title).tag(AssistantRoute.native)
                 Text(AssistantRoute.local.title).tag(AssistantRoute.local)
                 Text(AssistantRoute.automatic.title).tag(AssistantRoute.automatic)
                 Text(AssistantRoute.codex.title).tag(AssistantRoute.codex)
@@ -100,7 +103,7 @@ struct AssistantComposerConnections: View {
                 Button("Usage & limits") { store.open(.steward) }.buttonStyle(.borderless)
             }.accessibilityIdentifier("assistant.accounting-warning")
         }
-        if !store.isWorking && !store.arcCommandSelected && store.route != .automatic {
+        if !store.isWorking && !store.arcCommandSelected && !store.route.connectsAutomatically {
             ForEach(store.route.providers.filter { store.connection(for: $0) != .ready }) { provider in
                 HStack(alignment: .center, spacing: 8) {
                     ProviderConnectionControls(store: store, provider: provider)
@@ -124,7 +127,7 @@ struct ProviderConnectionControls: View {
             case .ready:
                 Button("Disconnect", systemImage: "xmark") { store.disconnectAssistant(provider: provider) }
                     .buttonStyle(.bordered)
-                    .help("Disconnect \(provider.name). The other assistant keeps its connection and active reply.")
+                    .help("Disconnect \(provider.name) and stop its current request.")
             case .connecting:
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small).accessibilityLabel("Connecting to \(provider.name)")
@@ -171,7 +174,7 @@ struct AssistantProviderPanel: View {
             if provider == .qwen {
                 localModels.padding(.top, 12)
             } else {
-                Text("Optional external reference or alternative using your Codex login. Choose the route and Send to share the current request. The resolved model name is not reported by this adapter. Connecting does not send your draft or shared copy.")
+                Text("Codex uses your existing login. ARCHi · Qwen first permits one Codex fallback if Qwen is unavailable or times out. Codex and Compare send the current request directly. Kept lessons, personal context and Qwen conversation stay local. Connecting sends no draft or shared copy.")
                     .font(.system(size: 11)).foregroundStyle(.secondary).lineSpacing(3).padding(.top, 10)
                 Text("Review your provider account’s data and licensing terms before sharing sensitive or proprietary material. ARCHi makes no copyright or exclusive ownership guarantee.")
                     .font(.system(size: 11)).foregroundStyle(.secondary).lineSpacing(3).padding(.top, 6)
@@ -189,10 +192,10 @@ struct AssistantProviderPanel: View {
                 ForEach(QwenAssistant.supportedModels, id: \.self) { model in Text(model).tag(model) }
             }
             .pickerStyle(.menu).accessibilityLabel("Local Qwen context model")
-            Text("The context role selects exact excerpts only when Temporary session context is on. Changing a local model stops the local reply and clears its context; Codex stays available.")
+            Text("The context role selects exact excerpts only when Temporary session context is on. Changing a local model stops local work and any active native fallback, then clears local context.")
                 .font(.system(size: 11)).foregroundStyle(.secondary).lineSpacing(3)
             Button("Manage session context") { store.open(.memory) }.buttonStyle(.borderless)
-            Text("Connect checks the installed Ollama model without generating an answer. Only Send starts local inference. Model choices apply to this visit.")
+            Text("ARCHi manages the local Qwen connection. Connection checks verify the installed Ollama model without generating an answer. Send starts inference. Model choices apply to this visit.")
                 .font(.system(size: 11)).foregroundStyle(.secondary).lineSpacing(3)
         }
         .disabled(store.isShuttingDown)

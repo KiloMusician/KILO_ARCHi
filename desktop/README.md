@@ -6,7 +6,7 @@ The current target is a supervised local desktop Alpha on this Mac. Start with t
 
 ## Build and launch
 
-Building requires macOS 14+ and Xcode's Swift toolchain. The Swift package has no external package dependencies. Local Qwen assistance additionally needs the existing Ollama service and a supported installed model; the companion and local ARC solver run without a model connection.
+Building requires macOS 14+ and Xcode's Swift toolchain. The Swift package has no external package dependencies. Local Qwen assistance needs installed Ollama and a supported installed model; ARCHi starts or reuses that local runtime automatically. The companion and local ARC solver run without a model connection. See [Native Qwen and bounded fallback](../docs/native-qwen.md).
 
 Export any working draft, keep the choices you want to retain, and **Quit ARCHi through its menu**. From the repository root:
 
@@ -26,7 +26,7 @@ Use `--stage-only --stage-dir /private/tmp/unique-candidate-directory` to build 
 
 - **ARCHi Home** opens the companion's field interface with dark surfaces, cyan accents and the current companion appearance. Its connection, shared document, active kept lessons, Node Lab records and personal rhythm come from the existing app state. Each action opens its existing destination. Use Window → ARCHi Home (Command–0) to return. The native window retains its 880 × 640 minimum, with scrolling at smaller sizes and grouped panels in wider windows.
 
-- **Assistant** uses Local Qwen by default. Connections offers independent Qwen and Codex controls; deliberate Compare keeps their replies separate. Connecting sends no draft or document. Send captures the current question, shared copy, selected passage, tone, length and confirmed help preferences. Stop cancels owned work; a cancelled route may need Connect again.
+- **Assistant** defaults to ARCHi-managed local Qwen, with one Codex fallback for an eligible connection, generation or timeout failure. Local-only auto-connect and manual routes remain available; the chosen route survives restart. Preparation sends no draft or document. Send captures the question, shared copy, selected passage and reply settings; kept lessons, personal context and local conversation never enter fallback. A desktop snapshot requires its own exact-copy permission for external use. Stop cancels owned work.
 - **Work together** holds a UTF-8 working copy with exact passage selection, placement preview, Explain/Rewrite/Shorten, Before/After review, checked Apply, one-step Undo and separate draft export. The imported original is unchanged. The working copy and Undo are session-only: **Export before Quit, Change document or Stop sharing**.
 - **What I remember** keeps explicitly authored lessons, with inspect/revise/withdraw/export controls. Eligible lessons go only to local Qwen. Temporary session context is separate, off by default, and consumes optional selection/reminder calls only when eligible input exists. Neither feature trains model weights.
 - **Companion room and Arena** use the bundled Unity renderer under the native session owner. Arena currently supports local practice and two seats on one Mac; online multiplayer and canonical rewards remain unimplemented.

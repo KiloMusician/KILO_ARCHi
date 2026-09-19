@@ -40,14 +40,17 @@ final class QwenAssistant: AssistantClient, LocalRoleClient {
     private(set) var metadata: QwenModelMetadata?
     let model: String
     private let configuration: URLSessionConfiguration
+    private let runtime: (any LocalQwenRuntimeManaging)?
     private var session: URLSession?
     private var generation: UInt64 = 0
     private var busy = false
     private let redirects = QwenRedirectPolicy()
 
-    init(model: String = defaultModel, configuration: URLSessionConfiguration = .ephemeral) {
+    init(model: String = defaultModel, configuration: URLSessionConfiguration = .ephemeral,
+         runtime: (any LocalQwenRuntimeManaging)? = nil) {
         self.model = model
         self.configuration = configuration.copy() as! URLSessionConfiguration
+        self.runtime = runtime
     }
 
     func connect() async throws {
@@ -58,7 +61,9 @@ final class QwenAssistant: AssistantClient, LocalRoleClient {
         defer { finishSession(connection, owner: owner) }
         do {
             let verified = try await withTaskCancellationHandler {
-                try await verifyModel(using: connection, owner: owner)
+                try await runtime?.ensureRunning()
+                try requireOwner(owner)
+                return try await verifyModel(using: connection, owner: owner)
             } onCancel: {
                 Task { @MainActor [weak self] in self?.cancel(owner: owner) }
             }
@@ -311,6 +316,7 @@ final class QwenAssistant: AssistantClient, LocalRoleClient {
 
     private static func failure(_ error: Error) -> Error {
         if let failure = error as? QwenFailure { return failure }
+        if error is LocalQwenRuntimeFailure { return error }
         if error is CancellationError { return QwenFailure.stopped }
         if let url = error as? URLError {
             if url.code == .cancelled { return QwenFailure.stopped }

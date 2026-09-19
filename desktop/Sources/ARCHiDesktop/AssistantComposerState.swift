@@ -17,6 +17,8 @@ struct AssistantComposerState {
             blockedReason = "Stop the current reply before sending another."
         } else if !store.arcCommandSelected && store.requestsRevision && store.textSelection == nil {
             blockedReason = "Select the passage to revise."
+        } else if !store.arcCommandSelected && !store.canShareDesktopInterestWithRoute {
+            blockedReason = "Allow this window copy for your external route before sending."
         } else if !store.canBeginReply {
             blockedReason = store.route == .compare
                 ? "Connect both assistants to send." : "Connect \(store.assistantProvider.name) to send."
@@ -38,6 +40,13 @@ struct AssistantComposerState {
                 : selection == nil ? "Message and full copy" : "Message, full copy and selected passage"
             let localPayload = store.sourceName == nil ? "Your message stays" : "\(payload) stay"
             switch store.route {
+            case .native:
+                if store.desktopInterestSource != nil,
+                   store.desktopInterestExternalDigest != LessonSource.digest(of: store.sharedText) {
+                    sendDisclosure = "This window copy stays on this Mac. You can allow this exact copy for one Codex fallback if Qwen has a connection, generation or timeout failure."
+                } else {
+                    sendDisclosure = "Qwen first. After a connection, generation or timeout failure, one Codex fallback may receive \(payload.lowercased()) and reply settings. Lessons, personal context and conversation stay local."
+                }
             case .local:
                 sendDisclosure = "\(localPayload) on this Mac."
             case .codex:

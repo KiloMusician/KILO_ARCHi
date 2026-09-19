@@ -188,6 +188,7 @@ final class DesktopDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var harmony: CompanionHarmonyPlayer?
     private var expressionObservers: [NSObjectProtocol] = []
     private var appearanceObserver: AnyCancellable?
+    private var assistantRouteObserver: AnyCancellable?
     private var isReviewingQuit = false
     private var terminationInProgress = false
 
@@ -200,6 +201,10 @@ final class DesktopDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
+        let routePreference = NativeAssistantRoutePreference(defaults: .standard)
+        store.prepareNativeAssistant(route: routePreference.load())
+        assistantRouteObserver = store.$route.dropFirst().removeDuplicates()
+            .sink { routePreference.save($0) }
         appearanceObserver = store.$preferences.map(\.workspaceAppearance).removeDuplicates()
             .sink { [weak self] appearance in self?.applyWorkspaceAppearance(appearance) }
         configureMenus()
@@ -266,6 +271,7 @@ final class DesktopDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         store.unityPresentation.stop()
         store.disconnectAssistant()
+        LocalQwenRuntime.shared.shutdown()
     }
 
     func applicationDidHide(_ notification: Notification) {
@@ -360,6 +366,7 @@ final class DesktopDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             // Retire answer ownership first, before waiting for presentation cleanup.
             // A late model callback must not publish into the closing session.
             await store.shutdownAssistant()
+            LocalQwenRuntime.shared.shutdown()
             await store.reactor.shutdown()
             await playHost.shutdown()
             if restarting {

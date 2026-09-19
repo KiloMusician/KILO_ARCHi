@@ -60,6 +60,7 @@ final class HamptonReasonsAssistant: AssistantClient {
     private(set) var contextEnabled: Bool
     private(set) var contextModel: String
     private let reasoner: any LocalRoleClient
+    private let nativeRuntime: LocalQwenRuntime?
     private var selector: any LocalRoleClient
     private var bank = HamptonSessionContext()
     private var connected = false
@@ -75,9 +76,10 @@ final class HamptonReasonsAssistant: AssistantClient {
 
     init(model: String = QwenAssistant.defaultModel, contextModel: String = defaultContextModel,
          reasoner: (any LocalRoleClient)? = nil, contextSelector: (any LocalRoleClient)? = nil,
-         contextEnabled: Bool = false) {
-        self.reasoner = reasoner ?? QwenAssistant(model: model)
-        self.selector = contextSelector ?? QwenAssistant(model: contextModel)
+         contextEnabled: Bool = false, nativeRuntime: LocalQwenRuntime? = nil) {
+        self.nativeRuntime = nativeRuntime
+        self.reasoner = reasoner ?? QwenAssistant(model: model, runtime: nativeRuntime)
+        self.selector = contextSelector ?? QwenAssistant(model: contextModel, runtime: nativeRuntime)
         self.contextModel = contextModel
         self.contextEnabled = contextEnabled
     }
@@ -102,7 +104,7 @@ final class HamptonReasonsAssistant: AssistantClient {
         guard !disposed, QwenAssistant.supportedModels.contains(model), model != contextModel else { return }
         disconnect()
         let previous = selector
-        selector = QwenAssistant(model: model)
+        selector = QwenAssistant(model: model, runtime: nativeRuntime)
         contextModel = model
         clearSessionContext()
         let id = UUID()

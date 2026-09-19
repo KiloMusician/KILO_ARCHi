@@ -25,6 +25,7 @@ ARC_REPLAY_FILES = {
     "scripts/arc-replay-config.json", "scripts/arc-replay-pins.json",
 }
 RELEASE_FILES = {"LICENSE", "ASSET_ATTRIBUTION.md", "THIRD_PARTY_NOTICES.md", "README.md", "docs/ALPHA_VALIDATION.md"}
+RELEASE_FILES.add("docs/native-qwen.md")
 EXACT = RELEASE_FILES | ARC_REPLAY_FILES | {
     ".gitignore", ".postcssrc.json", "index.html", "tsconfig.json", "package.json", "package-lock.json",
     "desktop/Package.swift", "desktop/README.md", "arc/README.md", "arc/tsconfig.json",

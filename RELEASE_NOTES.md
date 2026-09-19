@@ -28,3 +28,7 @@ The clean export excludes private research, conversations, profile records, cred
 See [validation](docs/ALPHA_VALIDATION.md) for the status of this prepared copy and the earlier tag's historical checks. The native/Unity handoff, full 3D embodiment, ordinary-day usefulness, long-session performance, complete accessibility, another-Mac installation and verified marketplace services remain open. No new provider result, model training, ownership proof or game-balance certification is implied.
 
 Build instructions and retention boundaries are in [README](README.md). Private assistant memories and shared work remain outside transferable character records.
+
+## Native Qwen integration — 19 September 2026
+
+ARCHi manages startup of an installed local Ollama runtime and selects Qwen first. One eligible Codex fallback retains the original request while excluding local memory; user-selected local-only routing survives restart. Usage records the attempts under one task. The installed desktop connects Qwen automatically; no fresh generation or live cloud fallback was used to qualify this increment. Focused checks cover runtime lifecycle, routing, accounting, cancellation, document ownership and exact-copy permissions. Model weights, installers and new external-provider adapters are not included. This source draft does not change release status.

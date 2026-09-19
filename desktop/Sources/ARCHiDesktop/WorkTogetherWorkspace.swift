@@ -53,7 +53,7 @@ struct WorkTogetherWorkspace: View {
             }
             .buttonStyle(.bordered)
             .accessibilityLabel("Assistant connections")
-            .help("Connect local Qwen or Codex")
+            .help("Review local Qwen and Codex connections")
             .popover(isPresented: $showsConnections) {
                 VStack(alignment: .leading, spacing: 16) {
                     Text("Assistant connections").font(.headline)
@@ -302,6 +302,7 @@ struct WorkTogetherWorkspace: View {
 
     private var pointAndExplainDestination: String {
         switch store.route {
+        case .native: "Qwen on this Mac, with one Codex fallback if Qwen is unavailable or times out"
         case .local: "Qwen on this Mac"
         case .codex: "Codex"
         case .compare: "both assistants"
@@ -401,7 +402,7 @@ struct WorkTogetherWorkspace: View {
             }
             HStack(spacing: 5) {
                 AssistantRoutePicker(store: store, compact: true)
-                if !store.isWorking, !store.arcCommandSelected, store.route != .automatic,
+                if !store.isWorking, !store.arcCommandSelected, !store.route.connectsAutomatically,
                    let provider = store.route.providers.first(where: { store.connection(for: $0) != .ready }) {
                     ProviderConnectionControls(store: store, provider: provider).controlSize(.small)
                 }

@@ -206,6 +206,28 @@ final class TokenStewardStore: ObservableObject {
         }
     }
 
+    /// A native request earns at most one external fallback lane after its
+    /// local lane has failed. Local success never leaves an unused cloud lane.
+    /// Admission alone is not dispatch; persist dispatch before entering Codex.
+    func registerFallback(requestID: String) throws {
+        try transaction { state in
+            guard let task = state.tasks.firstIndex(where: { $0.id == requestID }) else {
+                throw TokenStewardError.missingTask
+            }
+            guard state.tasks[task].route == "native",
+                  state.tasks[task].lanes.first(where: { $0.provider == AssistantProvider.qwen.name })?.state == "failed" else {
+                throw TokenStewardError.conflict("fallback requires a failed native local lane")
+            }
+            if let existing = state.tasks[task].lanes.first(where: { $0.provider == AssistantProvider.codex.name }) {
+                guard existing.state == "pending", !existing.dispatched else {
+                    throw TokenStewardError.conflict("fallback already attempted")
+                }
+                return
+            }
+            state.tasks[task].lanes.append(TokenStewardLane(provider: AssistantProvider.codex.name))
+        }
+    }
+
     /// Persist before reply entry; this is a lane dispatch, not a local generate
     /// count or proof of HTTP acceptance. A crash leaves a visible open task.
     func recordDispatch(requestID: String, provider: AssistantProvider) throws {
@@ -226,10 +248,22 @@ final class TokenStewardStore: ObservableObject {
         guard receipt.state != .pending else { return }
         let date = now()
         try transaction { state in
-            try Self.registerTask(id: receipt.requestID, route: receipt.route.rawValue,
-                providers: receipt.route.providers.map(\.name), date: date, in: &state)
-            let taskIndex = state.tasks.firstIndex { $0.id == receipt.requestID }!
-            let laneIndex = state.tasks[taskIndex].lanes.firstIndex { $0.provider == receipt.provider.name }!
+            if receipt.route.rawValue == "native" {
+                if let task = state.tasks.first(where: { $0.id == receipt.requestID }) {
+                    guard task.route == "native" else { throw TokenStewardError.conflict("application task identity") }
+                } else {
+                    guard receipt.provider == .qwen else { throw TokenStewardError.missingTask }
+                    try Self.registerTask(id: receipt.requestID, route: "native",
+                        providers: [AssistantProvider.qwen.name], date: date, in: &state)
+                }
+            } else {
+                try Self.registerTask(id: receipt.requestID, route: receipt.route.rawValue,
+                    providers: receipt.route.providers.map(\.name), date: date, in: &state)
+            }
+            guard let taskIndex = state.tasks.firstIndex(where: { $0.id == receipt.requestID }),
+                  let laneIndex = state.tasks[taskIndex].lanes.firstIndex(where: { $0.provider == receipt.provider.name }) else {
+                throw TokenStewardError.missingTask
+            }
             let oldLane = state.tasks[taskIndex].lanes[laneIndex]
             let measured = receipt.localInvocationReceipts != nil
             let lane = TokenStewardLane(provider: receipt.provider.name,
@@ -808,6 +842,16 @@ final class TokenStewardStore: ObservableObject {
             switch task.route {
             case "local", "automatic":
                 guard providers == [AssistantProvider.qwen.name] else { throw TokenStewardError.invalid("local task lanes") }
+            case "native":
+                guard providers == [AssistantProvider.qwen.name]
+                    || providers == [AssistantProvider.qwen.name, AssistantProvider.codex.name] else {
+                    throw TokenStewardError.invalid("native task lanes")
+                }
+                if providers.contains(AssistantProvider.codex.name) {
+                    guard task.lanes.first(where: { $0.provider == AssistantProvider.qwen.name })?.state == "failed" else {
+                        throw TokenStewardError.invalid("native fallback without local failure")
+                    }
+                }
             case "codex":
                 guard providers == [AssistantProvider.codex.name] else { throw TokenStewardError.invalid("subscription task lanes") }
             case "compare":

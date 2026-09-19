@@ -425,6 +425,7 @@ final class CompanionStore: ObservableObject {
         }
         let local = sessionContextEnabled ? "1 local answer call, plus up to 2 context calls" : "1 local answer call"
         switch route {
+        case .native: return local + " · at most 1 Codex fallback request"
         case .local: return local
         case .codex: return "1 Codex request"
         case .compare: return local + " · 1 Codex request"
@@ -436,20 +437,22 @@ final class CompanionStore: ObservableObject {
     var arcCommandSelected: Bool { ARCActiveAssistant.select(prompt) != nil || arc3CommandSelected }
     var isARCWorking: Bool { activeARCOwner != nil || arc3.isWorking }
     var canBeginReply: Bool { !isShuttingDown && !voiceInput.isActive
-        && (arcCommandSelected || (canShareDesktopInterestWithRoute && (route == .automatic || connectionState == .ready))) }
+        && (arcCommandSelected || (canShareDesktopInterestWithRoute && (route.connectsAutomatically || connectionState == .ready))) }
 
     var canShareDesktopInterestWithRoute: Bool {
-        desktopInterestSource == nil || route == .local || route == .automatic
+        desktopInterestSource == nil || route == .local || route.connectsAutomatically
             || desktopInterestExternalDigest == LessonSource.digest(of: sharedText)
     }
 
     func allowDesktopInterestWithExternalRoute() {
         guard !isShuttingDown, desktopInterestSource != nil,
-              route == .codex || route == .compare else { return }
+              route == .codex || route == .compare || route == .native else { return }
         desktopInterestExternalDigest = LessonSource.digest(of: sharedText)
         status = "This exact copy may be sent with your selected route. Nothing sent yet."
     }
-    var resultProviders: [AssistantProvider] { route.providers }
+    var resultProviders: [AssistantProvider] {
+        route == .native && compareResults[.codex] != nil ? [.qwen, .codex] : route.providers
+    }
 
     var nextReplyConversation: [AssistantConversationExchange] {
         localConversationEnabled && route != .codex
@@ -486,7 +489,7 @@ final class CompanionStore: ObservableObject {
     init(preferenceURL: URL? = nil, assistant: (any AssistantClient)? = nil,
          provider: AssistantProvider = .qwen,
          assistantFactory: @escaping @MainActor (AssistantProvider, String) -> any AssistantClient = { provider, model in
-             provider == .qwen ? HamptonReasonsAssistant(model: model) : CodexAssistant()
+             provider == .qwen ? HamptonReasonsAssistant(model: model, nativeRuntime: .shared) : CodexAssistant()
          },
          monotonicTime: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
          wallClock: @escaping () -> Date = Date.init, allowsPlay: Bool = true,
@@ -1596,7 +1599,7 @@ final class CompanionStore: ObservableObject {
         } else { revisionTarget = nil }
         cancelWork(reason: "New request replaces prior work.")
         let selectedRoute = route
-        guard selectedRoute == .automatic || selectedRoute.providers.allSatisfy({ connection(for: $0) == .ready }) else {
+        guard selectedRoute.connectsAutomatically || selectedRoute.providers.allSatisfy({ connection(for: $0) == .ready }) else {
             replySourceSelection = nil
             compareResults = [:]
             reply = "Connect \(selectedRoute == .compare ? "both assistants" : assistantProvider.name) to send this message. This request has not been sent."
@@ -1648,7 +1651,8 @@ final class CompanionStore: ObservableObject {
                 localProfile: provider == .qwen ? request.localProfile : nil)
             launchLane(provider, request: laneRequest, ticket: ticket, route: selectedRoute,
                        requestID: requestID, inputDigest: digest, pointing: pointing,
-                       routingReason: selectedRoute == .automatic ? "Local Qwen · connects when needed; failures stay on this Mac." : nil,
+                       routingReason: selectedRoute == .native ? "ARCHi-managed local Qwen first; one external fallback only on an eligible failure."
+                           : selectedRoute == .automatic ? "Local Qwen · connects when needed; failures stay on this Mac." : nil,
                        conversationExpiry: provider == .qwen ? conversationExpiry.min() : nil)
         }
         if let pointing {
@@ -1667,7 +1671,7 @@ final class CompanionStore: ObservableObject {
                             pointing: AssistantPointingSnapshot? = nil, routingReason: String? = nil,
                             conversationExpiry: Date? = nil) {
         // A manual connection check cannot race an automatically owned check.
-        if route == .automatic, connection(for: provider) != .ready { closeConnection(provider) }
+        if route.connectsAutomatically, connection(for: provider) != .ready { closeConnection(provider) }
         let assistant = client(for: provider)
         let owner = UUID(), epoch = connectionGenerations[provider, default: 0]
         let seconds = provider == .qwen ? 180 : 90
@@ -1731,12 +1735,15 @@ final class CompanionStore: ObservableObject {
                     status: .rejected, stage: self.compareResults[provider]?.receipt?.requestStarted == true ? .generation : .connection,
                     role: nil, requestID: nil, reason: .timedOut)
             }
-            self.failLane(provider, message: "\(provider.name) reached its \(seconds)-second reply limit.")
+            self.finishFailedAttempt(provider, error: QwenFailure.timedOut,
+                message: "\(provider.name) reached its \(seconds)-second reply limit.",
+                request: request, ticket: ticket, route: route, requestID: requestID,
+                inputDigest: inputDigest, pointing: pointing)
         }
         replyTasks[provider] = Task { [weak self, assistant] in
             do {
                 guard let self, self.isCurrentLane(provider, owner: owner, epoch: epoch, client: assistant, ticket: ticket), !Task.isCancelled else { return }
-                if route == .automatic, self.connection(for: provider) != .ready {
+                if route.connectsAutomatically, self.connection(for: provider) != .ready {
                     self.connectionStates[provider] = .connecting
                     self.connectionMessages[provider] = "Checking \(provider.name) for this request…"
                     self.compareResults[provider]?.status = "Connecting to \(provider.name)…"
@@ -1809,7 +1816,10 @@ final class CompanionStore: ObservableObject {
                         stage: self.compareResults[provider]?.receipt?.requestStarted == true ? .generation : .connection,
                         role: nil, requestID: nil)
                 }
-                self.failLane(provider, message: (error as? LocalizedError)?.errorDescription ?? "The assistant connection stopped. Try connecting again.")
+                self.finishFailedAttempt(provider, error: error,
+                    message: (error as? LocalizedError)?.errorDescription ?? "The assistant connection stopped. Try connecting again.",
+                    request: request, ticket: ticket, route: route, requestID: requestID,
+                    inputDigest: inputDigest, pointing: pointing)
             }
         }
     }
@@ -1820,6 +1830,14 @@ final class CompanionStore: ObservableObject {
     }
 
     func connectAssistant() { for provider in route.providers { connectAssistant(provider: provider) } }
+
+    /// Launch checks local readiness without sending a question or contacting
+    /// an external account. Only explicit Send owns any fallback.
+    func prepareNativeAssistant(route selected: AssistantRoute = .native) {
+        guard !isShuttingDown else { return }
+        setAssistantRoute(selected)
+        if selected.connectsAutomatically { connectAssistant(provider: .qwen) }
+    }
 
     func connectAssistant(provider: AssistantProvider) {
         guard !isShuttingDown, replyOwners[provider] == nil,
@@ -2051,6 +2069,7 @@ final class CompanionStore: ObservableObject {
         arc3.stop(reason: reason)
         let hadLocalWork = replyOwners[.qwen] != nil
         cancelLane(.qwen, reason: reason)
+        if route == .native { cancelLane(.codex, reason: reason) }
         if hadLocalWork && !isWorking && route == .local { workGeneration &+= 1 }
         // Completed local answers can refer to excerpts that have just been
         // revoked, so remove that lane while leaving Codex's result intact.
@@ -2072,6 +2091,41 @@ final class CompanionStore: ObservableObject {
         if !isWorking && route != .compare { replySourceSelection = nil }
         refreshRouteConnection()
         refreshWorkStatus()
+    }
+
+    /// Called only for a caught provider failure or the owned reply deadline.
+    /// Invalid proposals, storage failures and cancellations never grant fallback.
+    private func finishFailedAttempt(_ provider: AssistantProvider, error: any Error, message: String,
+                                     request: AssistantRequest, ticket: ContextTicket, route: AssistantRoute,
+                                     requestID: String, inputDigest: String, pointing: AssistantPointingSnapshot?) {
+        let eligible = provider == .qwen && route == .native && self.route == .native
+            && NativeAssistantFallback.isEligible(error) && compareResults[.codex] == nil
+        failLane(provider, message: message)
+        guard eligible, !isShuttingDown, isCurrent(ticket, requireVisible: false) else { return }
+        guard desktopInterestSource == nil || desktopInterestExternalDigest == LessonSource.digest(of: sharedText) else {
+            status = "Local Qwen is unavailable. This window copy is local-only; allow this exact copy before using an external route."
+            return
+        }
+        if let pointing, !isCurrentPointing(pointing) { return }
+        do {
+            try retryStewardReceipts()
+            try tokenSteward.registerFallback(requestID: requestID)
+        } catch {
+            stewardMessage = "External fallback was not started: \(error.localizedDescription)"
+            status = stewardMessage ?? "Fallback accounting unavailable"
+            return
+        }
+        let external = AssistantRequest(prompt: request.prompt, sourceName: request.sourceName,
+            sourceText: request.sourceText, sourceRevision: request.sourceRevision,
+            placementRevision: request.placementRevision, settings: request.settings,
+            selection: request.selection, revisionTarget: request.revisionTarget, companion: request.companion)
+        assistantProvider = .codex
+        replySourceSelection = request.selection
+        isWorking = true
+        launchLane(.codex, request: external, ticket: ticket, route: route, requestID: requestID,
+            inputDigest: inputDigest, pointing: pointing,
+            routingReason: "Local Qwen could not finish: \(message) One Codex fallback; no local lessons, personal context or prior conversation forwarded.")
+        status = "Qwen unavailable · using Codex fallback"
     }
 
     private func setLane(_ provider: AssistantProvider, text: String? = nil, status: String, state: AssistantLaneState) {

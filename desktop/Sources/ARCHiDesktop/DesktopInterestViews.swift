@@ -105,19 +105,41 @@ struct DesktopInterestSharingNotice: View {
                     .font(.system(size: 11, weight: .medium))
                 Text("Captured \(source.capturedAt.formatted(date: .abbreviated, time: .shortened)). The original window can change; this copy does not refresh automatically.")
                     .font(.system(size: 10)).foregroundStyle(.secondary)
-                if !store.canShareDesktopInterestWithRoute {
+                if store.route == .native && !hasExternalPermission {
+                    Text("This copy stays local. Send can try Qwen now; Codex fallback needs permission for this exact copy.")
+                        .font(.system(size: 11))
+                    Button("Allow this copy for Codex fallback") { store.allowDesktopInterestWithExternalRoute() }
+                        .buttonStyle(.bordered).controlSize(.small).accessibilityIdentifier("interest.allow-external")
+                        .disabled(store.isWorking || store.isShuttingDown)
+                } else if (store.route == .codex || store.route == .compare) && !hasExternalPermission {
                     Text("This copy is local. Your selected route includes Codex.").font(.system(size: 11))
                     Button("Allow this copy with \(store.route.title)") { store.allowDesktopInterestWithExternalRoute() }
                         .buttonStyle(.bordered).controlSize(.small).accessibilityIdentifier("interest.allow-external")
+                        .disabled(store.isWorking || store.isShuttingDown)
                 } else {
-                    Text(store.route == .local || store.route == .automatic
-                         ? "Only Local Qwen receives this copy when you press Send."
-                         : "This exact copy may be sent to your selected route when you press Send.")
+                    Text(sharingDisclosure)
                         .font(.system(size: 10)).foregroundStyle(.secondary)
                 }
             }
             .fixedSize(horizontal: false, vertical: true)
             .accessibilityElement(children: .contain).accessibilityIdentifier("interest.sharing")
+        }
+    }
+
+    private var hasExternalPermission: Bool {
+        store.desktopInterestExternalDigest == LessonSource.digest(of: store.sharedText)
+    }
+
+    private var sharingDisclosure: String {
+        switch store.route {
+        case .native:
+            "External sharing is allowed for this exact copy. Send tries Qwen first; one Codex fallback may receive this copy if Qwen is unavailable or times out."
+        case .local, .automatic:
+            hasExternalPermission
+                ? "Only Local Qwen receives this copy with the selected route. External sharing permission is retained for this exact copy."
+                : "Only Local Qwen receives this copy when you press Send. External sharing is not allowed."
+        case .codex, .compare:
+            "External sharing is allowed for this exact copy. Codex receives it when you press Send."
         }
     }
 }
