@@ -3,7 +3,7 @@ import { appendFile, mkdir, mkdtemp, readFile, rm, unlink, writeFile } from "nod
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { digest, pinnedPaths, projectRoot, runReplay } from "./arc-replay.mjs";
+import { digest, pinnedPaths, projectRoot, runReplay, runtimeIdentity } from "./arc-replay.mjs";
 
 async function fixture(t) {
   const directory = await mkdtemp(path.join(os.tmpdir(), "archi-checker-replay-test-"));
@@ -15,6 +15,13 @@ async function fixture(t) {
     await mkdir(path.dirname(target), { recursive: true });
     await writeFile(target, await readFile(path.join(projectRoot, relative)), { flag: "wx" });
   }
+  // Unit tests exercise replay behavior on the runner that executes them.
+  // Re-pin only this temporary fixture to that runtime; repository pins remain
+  // unchanged and still gate real qualification to their reviewed environment.
+  const pinsFile = path.join(root, "scripts/arc-replay-pins.json");
+  const fixturePins = JSON.parse(await readFile(pinsFile, "utf8"));
+  fixturePins.environment = await runtimeIdentity();
+  await writeFile(pinsFile, `${JSON.stringify(fixturePins, null, 2)}\n`);
   return { root, outputDirectory: path.join(directory, "run"), second: path.join(directory, "second") };
 }
 async function pins(fixture, update) {
