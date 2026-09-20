@@ -287,8 +287,11 @@ enum CompanionGraph {
         mutating func addLocalEvidence(_ receipt: AssistantLaneReceipt, requestID: String, answerID: String) {
             let evidence = receipt.evidence
             let publicIDs = Set(["current-question", "shared-copy", "selected-passage"])
-            let sourceIDs = Set((evidence?.sourceIDsAvailable ?? []) + (evidence?.reasoningSourceIDsOffered ?? [])
-                + (evidence?.reasoningSourceIDsDispatched ?? []) + (evidence?.sourceIDsCited ?? []))
+            var sourceIDs = Set<String>()
+            sourceIDs.formUnion(evidence?.sourceIDsAvailable ?? [])
+            sourceIDs.formUnion(evidence?.reasoningSourceIDsOffered ?? [])
+            sourceIDs.formUnion(evidence?.reasoningSourceIDsDispatched ?? [])
+            sourceIDs.formUnion(evidence?.sourceIDsCited ?? [])
             truncated += max(0, sourceIDs.count - 128)
             for reference in sourceIDs.sorted().prefix(128) {
                 let offered = evidence?.reasoningSourceIDsOffered.contains(reference) == true
@@ -309,8 +312,12 @@ enum CompanionGraph {
                 if cited { edge(id, answerID, "citation recorded") }
             }
             let captured = Dictionary(grouping: receipt.localLessons, by: \.modelID)
-            let memoryIDs = Set((evidence?.lessonIDsAvailable ?? []) + (evidence?.reasoningMemoryIDsOffered ?? [])
-                + (evidence?.reasoningMemoryIDsDispatched ?? []) + (evidence?.memoryIDsCited ?? []) + receipt.localLessons.map(\.modelID))
+            var memoryIDs = Set<String>()
+            memoryIDs.formUnion(evidence?.lessonIDsAvailable ?? [])
+            memoryIDs.formUnion(evidence?.reasoningMemoryIDsOffered ?? [])
+            memoryIDs.formUnion(evidence?.reasoningMemoryIDsDispatched ?? [])
+            memoryIDs.formUnion(evidence?.memoryIDsCited ?? [])
+            memoryIDs.formUnion(receipt.localLessons.map(\.modelID))
             truncated += max(0, memoryIDs.count - 128)
             for reference in memoryIDs.sorted().prefix(128) {
                 let id = key(requestID, "memory-ref", reference)
