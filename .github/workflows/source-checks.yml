@@ -2,7 +2,7 @@ name: Source checks
 
 on:
   push:
-    branches: [main, 'codex/**']
+    branches: [main, 'codex/**', 'kilo/**']
   pull_request:
   workflow_dispatch:
 
